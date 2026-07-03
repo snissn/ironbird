@@ -990,14 +990,14 @@ func simappDependencyPins(includeCometDB bool) []dependencyPin {
 
 func simappReplaceCmd(includeCometDB bool) string {
 	cmds := []string{
-		"go mod edit -replace github.com/cosmos/cosmos-db=github.com/snissn/cosmos-db@" + simappCosmosDBVersion,
-		"go mod edit -replace github.com/snissn/gomap=github.com/snissn/gomap@" + simappGomapVersion,
-		"go mod edit -replace github.com/cosmos/iavl=github.com/snissn/iavl@" + simappIAVLVersion,
+		"github.com/cosmos/cosmos-db=github.com/snissn/cosmos-db@" + simappCosmosDBVersion,
+		"github.com/snissn/gomap=github.com/snissn/gomap@" + simappGomapVersion,
+		"github.com/cosmos/iavl=github.com/snissn/iavl@" + simappIAVLVersion,
 	}
 	if includeCometDB {
-		cmds = append(cmds, "go mod edit -replace github.com/cometbft/cometbft-db=github.com/snissn/cometbft-db@"+simappCometDBVersion)
+		cmds = append(cmds, "github.com/cometbft/cometbft-db=github.com/snissn/cometbft-db@"+simappCometDBVersion)
 	}
-	return strings.Join(cmds, " && ")
+	return strings.Join(cmds, " ")
 }
 
 func simappScenario(name, desc, backend string, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst string) scenario {

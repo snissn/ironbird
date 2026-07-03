@@ -28,8 +28,15 @@ type Activity struct {
 	TelemetrySettings digitalocean.TelemetrySettings
 }
 
-func handleLoadTestError(ctx context.Context, logger *zap.Logger, p provider.ProviderI, chain *chain.Chain, originalErr error, errMsg string) (messages.RunLoadTestResponse, error) {
-	res := messages.RunLoadTestResponse{}
+const maxLoadTestTaskLogBytes = 256 * 1024
+
+func handleLoadTestError(ctx context.Context, logger *zap.Logger, p provider.ProviderI, chain *chain.Chain, task provider.TaskI, loadTestConfig string, originalErr error, errMsg string) (messages.RunLoadTestResponse, error) {
+	res := messages.RunLoadTestResponse{
+		LoadTestConfig: loadTestConfig,
+	}
+	if task != nil {
+		res.TaskLogs = readTaskLogs(ctx, logger, task)
+	}
 	wrappedErr := fmt.Errorf("%s: %w", errMsg, originalErr)
 
 	newProviderState, serializeErr := p.SerializeProvider(ctx)
@@ -179,14 +186,15 @@ func (a *Activity) RunLoadTest(ctx context.Context, req messages.RunLoadTestRequ
 
 	chain, err := chain.RestoreChain(ctx, logger, p, decompressedChainState, node.RestoreNode, walletConfig)
 	if err != nil {
-		return handleLoadTestError(ctx, logger, p, nil, err, "failed to restore chain")
+		return handleLoadTestError(ctx, logger, p, nil, nil, "", err, "failed to restore chain")
 	}
 
+	loadTestConfig := ""
 	configBytes, err := generateLoadTestSpec(ctx, logger, chain, chain.GetConfig().ChainId, req.LoadTestSpec, req.BaseMnemonic, req.NumWallets)
 	if err != nil {
-		return handleLoadTestError(ctx, logger, p, chain, err, "failed to generate load test config")
+		return handleLoadTestError(ctx, logger, p, chain, nil, loadTestConfig, err, "failed to generate load test config")
 	}
-	loadTestConfig, err := redactLoadTestConfig(configBytes)
+	loadTestConfig, err = redactLoadTestConfig(configBytes)
 	if err != nil {
 		logger.Warn("failed to redact load test config", zap.Error(err))
 		loadTestConfig = fmt.Sprintf("failed to redact load test config: %v", err)
@@ -213,16 +221,16 @@ func (a *Activity) RunLoadTest(ctx context.Context, req messages.RunLoadTestRequ
 		},
 	})
 	if err != nil {
-		return handleLoadTestError(ctx, logger, p, chain, err, "failed to create task")
+		return handleLoadTestError(ctx, logger, p, chain, nil, loadTestConfig, err, "failed to create task")
 	}
 
 	if err := task.WriteFile(ctx, "loadtest.yml", configBytes); err != nil {
-		return handleLoadTestError(ctx, logger, p, chain, err, "failed to write config file to task")
+		return handleLoadTestError(ctx, logger, p, chain, task, loadTestConfig, err, "failed to write config file to task")
 	}
 
 	logger.Info("starting load test")
 	if err := task.Start(ctx); err != nil {
-		return handleLoadTestError(ctx, logger, p, chain, err, "failed to start task")
+		return handleLoadTestError(ctx, logger, p, chain, task, loadTestConfig, err, "failed to start task")
 	}
 
 	ticker := time.NewTicker(10 * time.Second)
@@ -232,7 +240,7 @@ func (a *Activity) RunLoadTest(ctx context.Context, req messages.RunLoadTestRequ
 		select {
 		case <-ctx.Done():
 			logger.Warn("context cancelled during load test execution")
-			return handleLoadTestError(ctx, logger, p, chain, ctx.Err(), "context cancelled")
+			return handleLoadTestError(ctx, logger, p, chain, task, loadTestConfig, ctx.Err(), "context cancelled")
 		case <-ticker.C:
 			status, err := task.GetStatus(ctx)
 			if err != nil {
@@ -246,12 +254,12 @@ func (a *Activity) RunLoadTest(ctx context.Context, req messages.RunLoadTestRequ
 			logger.Info("load test task finished, reading results")
 			resultBytes, err := task.ReadFile(ctx, "load_test.json")
 			if err != nil {
-				return handleLoadTestError(ctx, logger, p, chain, err, "failed to read result file")
+				return handleLoadTestError(ctx, logger, p, chain, task, loadTestConfig, err, "failed to read result file")
 			}
 
 			var result ctltypes.LoadTestResult
 			if err := json.Unmarshal(resultBytes, &result); err != nil {
-				return handleLoadTestError(ctx, logger, p, chain, err, "failed to parse result file")
+				return handleLoadTestError(ctx, logger, p, chain, task, loadTestConfig, err, "failed to parse result file")
 			}
 			logger.Info("load test completed successfully", zap.Any("result", result))
 
@@ -325,5 +333,17 @@ func readTaskLogs(ctx context.Context, logger *zap.Logger, task provider.TaskI) 
 		logger.Warn("failed to read task logs", zap.Error(err))
 		return ""
 	}
-	return logs
+	return truncateTaskLogs(logs, maxLoadTestTaskLogBytes)
+}
+
+func truncateTaskLogs(logs string, maxBytes int) string {
+	if maxBytes <= 0 || len(logs) <= maxBytes {
+		return logs
+	}
+	marker := "[truncated task logs; showing tail]\n"
+	if maxBytes <= len(marker) {
+		return marker[:maxBytes]
+	}
+	keepBytes := maxBytes - len(marker)
+	return marker + logs[len(logs)-keepBytes:]
 }

@@ -19,7 +19,7 @@ Key current results:
 
 | Question | Best current answer |
 | --- | --- |
-| Can Ironbird run the Cosmos blog EVM workload locally? | Yes. After the EVM account funding fix, the workload executes and reaches 528.2 included TPS through the original one-validator/one-full-node local topology. |
+| Can Ironbird run the Cosmos blog EVM workload locally? | Yes. After the EVM account funding fix, the workload executes and reaches 528.2 runtime TPS through the original one-validator/one-full-node local topology. |
 | What was the biggest EVM bottleneck? | The full-node RPC/txpool relay path. With one validator and one full node, a 2,000 tx attempt included only 728 tx despite no broadcast failures. Sending directly to the validator included all 10,000 tx at 1,000 runtime TPS. |
 | Can the local EVM lane reach thousands of TPS? | It reaches 1,000 runtime TPS with full inclusion. A 2,000 offered-TPS run still reported 1,000 runtime TPS, with the validator near 977% CPU, 1.332 GiB memory, and 1.11 GB writes. The next ceiling is validator-side execution/processing, not fee config or Catalyst send CPU. |
 | Do extra local validators help? | No in this local Docker setup. Four validators and no full nodes included only 14 of 5,000 attempted EVM transactions. |

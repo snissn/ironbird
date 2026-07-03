@@ -317,10 +317,12 @@ func (a *Activity) LaunchTestnet(ctx context.Context, req messages.LaunchTestnet
 
 func workflowIDFromActivityContext(ctx context.Context) (workflowID string) {
 	defer func() {
+		if r := recover(); r != nil {
+			zap.L().Warn("falling back to local workflow ID after activity context lookup panic", zap.Any("panic", r))
+		}
 		if workflowID == "" {
 			workflowID = "local"
 		}
-		_ = recover()
 	}()
 
 	info := activity.GetInfo(ctx)

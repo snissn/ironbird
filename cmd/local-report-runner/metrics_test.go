@@ -85,6 +85,9 @@ func TestSimappFullStackScenarioSetsAppAndNodeBackends(t *testing.T) {
 	if !strings.Contains(sc.ReplaceCmd, "github.com/cometbft/cometbft-db=github.com/snissn/cometbft-db@"+simappCometDBVersion) {
 		t.Fatalf("replace command missing cometbft-db TreeDB fork: %s", sc.ReplaceCmd)
 	}
+	if strings.Contains(sc.ReplaceCmd, "go mod edit") || strings.Contains(sc.ReplaceCmd, "&&") {
+		t.Fatalf("replace specs must not contain shell commands: %s", sc.ReplaceCmd)
+	}
 	if !strings.Contains(sc.ImageTag, "fullstack") {
 		t.Fatalf("image tag = %q, want fullstack marker", sc.ImageTag)
 	}
