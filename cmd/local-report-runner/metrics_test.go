@@ -485,6 +485,30 @@ func TestLoadWindowAcceptedAllowsZeroMinimum(t *testing.T) {
 	}
 }
 
+func TestLoadWindowTargetTransactionsUsesCeilingAndClamps(t *testing.T) {
+	tests := []struct {
+		name     string
+		intended int
+		fraction float64
+		want     int
+	}{
+		{name: "strict", intended: 50000, fraction: 1, want: 50000},
+		{name: "fraction", intended: 50000, fraction: 0.995, want: 49750},
+		{name: "ceiling", intended: 101, fraction: 0.995, want: 101},
+		{name: "minimum one", intended: 1, fraction: 0.5, want: 1},
+		{name: "zero intended", intended: 0, fraction: 0.995, want: 0},
+		{name: "invalid low fraction", intended: 50000, fraction: 0, want: 50000},
+		{name: "invalid high fraction", intended: 50000, fraction: 1.1, want: 50000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := loadWindowTargetTransactions(tt.intended, tt.fraction); got != tt.want {
+				t.Fatalf("loadWindowTargetTransactions(%d, %v) = %d, want %d", tt.intended, tt.fraction, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadWindowMonitorWaitReturnsReachedObservation(t *testing.T) {
 	done := make(chan loadWindowObservation, 1)
 	done <- loadWindowObservation{

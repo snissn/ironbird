@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"math/big"
 	"net/http"
 	"os"
@@ -515,6 +516,7 @@ func main() {
 		rawTxAudit                  = flag.Bool("raw-tx-audit", true, "when true, verify non-EVM tx inclusion with post-load CometBFT /tx queries; disable for clean app CPU profiles")
 		loadWindowDrainTimeout      = flag.Duration("load-window-drain-timeout", 0, "optional extra time to keep the chain running after Catalyst exits so app metrics can reach the load-window target")
 		loadWindowMinDuration       = flag.Duration("load-window-min-duration", 0, "minimum app-metric load-window duration required for final throughput evidence; short reached windows are annotated invalid")
+		loadWindowTargetFraction    = flag.Float64("load-window-target-fraction", 1.0, "fraction of intended transactions required before the app-metric load-window target can be marked reached")
 		cpuprofile                  = flag.String("cpuprofile", "", "write local runner CPU profile to file")
 		memprofile                  = flag.String("memprofile", "", "write local runner heap profile to file")
 		blockprofile                = flag.String("blockprofile", "", "write local runner block profile to file")
@@ -575,6 +577,9 @@ func main() {
 		celestiaDryRun              = flag.Bool("celestia-dry-run", false, "for celestia-sync-ab, write env files and artifact metadata without executing the sync")
 	)
 	flag.Parse()
+	if *loadWindowTargetFraction <= 0 || *loadWindowTargetFraction > 1 {
+		fatalf("-load-window-target-fraction must be > 0 and <= 1, got %v", *loadWindowTargetFraction)
+	}
 	preseed := makePreseedConfig(*preseedProfile, *preseedAccounts, *wallets)
 	celestiaConfig := celestiaSyncConfig{
 		RunnerScript:                   *celestiaABScript,
@@ -654,7 +659,7 @@ func main() {
 		if sc.Runner == "celestia-sync-ab" {
 			result = runCelestiaSyncScenario(ctx, sc)
 		} else {
-			result = runScenario(ctx, workerConfig, sc, *skipBuild, *keepTestnets, *commitBenchBlocks, *appCPUProfileDir, *appHeapProfileDir, *rawTxAudit, *loadWindowDrainTimeout, *loadWindowMinDuration)
+			result = runScenario(ctx, workerConfig, sc, *skipBuild, *keepTestnets, *commitBenchBlocks, *appCPUProfileDir, *appHeapProfileDir, *rawTxAudit, *loadWindowDrainTimeout, *loadWindowMinDuration, *loadWindowTargetFraction)
 		}
 		artifact.Results = append(artifact.Results, result)
 		if result.Error != "" {
@@ -1092,7 +1097,7 @@ func launchGenesisAccounts(sc scenario) int {
 	return sc.NumWallets
 }
 
-func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appCPUProfileDir, appHeapProfileDir string, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration) (result runResult) {
+func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appCPUProfileDir, appHeapProfileDir string, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration, loadWindowTargetFraction float64) (result runResult) {
 	result.Scenario = sc
 	result.StartedAt = time.Now()
 	result.ProviderName = fmt.Sprintf("ib%s%s", shortChainName(sc.Name), strings.ToLower(coreutil.RandomString(4)))
@@ -1243,8 +1248,10 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	}
 	loadActivity := &loadtest.Activity{}
 	var windowMonitor *loadWindowMonitor
-	if !sc.IsEVMChain && intendedTransactions(sc) > 0 {
-		windowMonitor = startLoadWindowMonitor(ctx, result.ProviderName, result.MetricsBefore, intendedTransactions(sc), loadWindowMinDuration, 500*time.Millisecond)
+	intendedTxs := intendedTransactions(sc)
+	if !sc.IsEVMChain && intendedTxs > 0 {
+		targetTxs := loadWindowTargetTransactions(intendedTxs, loadWindowTargetFraction)
+		windowMonitor = startLoadWindowMonitor(ctx, result.ProviderName, result.MetricsBefore, targetTxs, loadWindowMinDuration, 500*time.Millisecond)
 	}
 	endPhase = startPhase(&result, "run_load_test", fmt.Sprintf("wallets=%d", sc.NumWallets))
 	loadResp, err := loadActivity.RunLoadTest(ctx, messages.RunLoadTestRequest{
@@ -3101,6 +3108,23 @@ func loadWindowAccepted(obs *loadWindowObservation) bool {
 		return false
 	}
 	return obs.MinimumSeconds <= 0 || obs.DurationSatisfied
+}
+
+func loadWindowTargetTransactions(intended int, fraction float64) int {
+	if intended <= 0 {
+		return intended
+	}
+	if fraction <= 0 || fraction > 1 {
+		return intended
+	}
+	target := int(math.Ceil(float64(intended) * fraction))
+	if target < 1 {
+		return 1
+	}
+	if target > intended {
+		return intended
+	}
+	return target
 }
 
 func intendedTransactions(sc scenario) int {
