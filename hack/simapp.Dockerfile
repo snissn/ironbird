@@ -1,7 +1,8 @@
 ARG IMG_TAG=latest
+ARG GO_IMAGE=golang:1.25-alpine
 
 # Compile the simapp binary
-FROM golang:1.25-alpine AS simd-builder
+FROM ${GO_IMAGE} AS simd-builder
 ARG GIT_SHA
 RUN echo "Ironbird building with SHA: $GIT_SHA"
 
@@ -20,13 +21,14 @@ RUN git clone $CHAIN_SRC /src/app && \
 
 WORKDIR /src/app/simapp
 RUN if [ -n "$REPLACE_CMD" ]; then \
-        go mod tidy && \
-        echo "After go mod tidy, applying replace commands:" && \
-        echo "$REPLACE_CMD" > replace_cmd.sh && \
-        chmod +x replace_cmd.sh && \
-        sh replace_cmd.sh && \
-        echo "Final go.mod:" && \
-        cat go.mod && \
+	        go mod tidy && \
+	        echo "After go mod tidy, applying module replacements:" && \
+	        for replace in $REPLACE_CMD; do \
+	            echo "go mod edit -replace ${replace}" && \
+	            go mod edit -replace "$replace"; \
+	        done && \
+	        echo "Final go.mod:" && \
+	        cat go.mod && \
         echo "Updating go.sum with replaced modules:" && \
         go get ./... && \
         echo "Done updating go.sum"; \

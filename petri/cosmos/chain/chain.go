@@ -22,6 +22,7 @@ import (
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/evm/crypto/ethsecp256k1"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -934,12 +935,13 @@ func UpdateGenesisAccounts(accounts []Account, genesisData map[string]any) (map[
 	return genesisData, nil
 }
 
-// builds wallets from the baseMnemonic, with a bipPassphrase of [0,numAdditionalAccounts)
+// builds wallets from the baseMnemonic. Cosmos accounts use integer BIP39 passphrases;
+// the first EVM account uses an empty passphrase to match Catalyst wallet derivation.
 func buildAccounts(walletCfg petritypes.WalletConfig, baseMnemonic string, startingAccNum, numAdditionalAccs int) ([]Account, error) {
 	accounts := make([]Account, 0, numAdditionalAccs)
 	for i := range numAdditionalAccs {
 		keyName := fmt.Sprintf("additionalaccount%d", i)
-		w, err := wallet.NewWallet(keyName, baseMnemonic, fmt.Sprintf("%d", i), walletCfg)
+		w, err := wallet.NewWallet(keyName, baseMnemonic, additionalAccountPassphrase(walletCfg, i), walletCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create wallet %d: %w", i+1, err)
 		}
@@ -953,6 +955,15 @@ func buildAccounts(walletCfg petritypes.WalletConfig, baseMnemonic string, start
 		accounts = append(accounts, account)
 	}
 	return accounts, nil
+}
+
+func additionalAccountPassphrase(walletCfg petritypes.WalletConfig, index int) string {
+	// Catalyst derives the first EVM sender from the base mnemonic with the
+	// default empty BIP39 passphrase; matching it keeps prefunded account 0 usable.
+	if index == 0 && walletCfg.SigningAlgorithm == ethsecp256k1.KeyType {
+		return ""
+	}
+	return strconv.Itoa(index)
 }
 
 // builds a balance slice for the accounts and funds.

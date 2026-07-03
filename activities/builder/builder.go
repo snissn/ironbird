@@ -120,35 +120,35 @@ func (a *Activity) createRepositoryIfNotExists(ctx context.Context) error {
 	return nil
 }
 
-// generateReplace generates a replace directive for a specific module version
-// This forces a specific version of a dependency
+// generateReplace generates a go mod edit -replace spec for a specific module version.
+// Dockerfiles consume these specs as data, not as shell commands.
 func generateReplace(dependencies map[string]string, owner, repo, tag string) string {
 	orig := dependencies[fmt.Sprintf("%s/%s", owner, repo)]
-	return fmt.Sprintf("go mod edit -replace %s=github.com/%s/%s@%s", orig, owner, repo, tag)
+	return fmt.Sprintf("%s=github.com/%s/%s@%s", orig, owner, repo, tag)
 }
 
 func generateMultipleReplaces(req messages.BuildDockerImageRequest) string {
-	var replaceCommands []string
+	var replaceSpecs []string
 
 	// For cometbft builds, replace cometbft dependency in cosmos-sdk simapp
 	if req.Repo == "cometbft" {
-		replaceCommands = append(replaceCommands,
+		replaceSpecs = append(replaceSpecs,
 			generateReplace(dependencies, repoOwners[req.Repo], req.Repo, req.SHA))
 	}
 
 	// For EVM builds with optional SDK version override
 	if req.CosmosSdkSha != "" {
-		replaceCommands = append(replaceCommands,
+		replaceSpecs = append(replaceSpecs,
 			generateReplace(dependencies, repoOwners["cosmos-sdk"], "cosmos-sdk", req.CosmosSdkSha))
 	}
 
 	// For EVM builds with optional CometBFT version override
 	if req.CometBFTSha != "" {
-		replaceCommands = append(replaceCommands,
+		replaceSpecs = append(replaceSpecs,
 			generateReplace(dependencies, repoOwners["cometbft"], "cometbft", req.CometBFTSha))
 	}
 
-	return strings.Join(replaceCommands, " && ")
+	return strings.Join(replaceSpecs, " ")
 }
 
 func generateTag(req messages.BuildDockerImageRequest) string {
@@ -290,7 +290,7 @@ func (a *Activity) BuildDockerImage(ctx context.Context, req messages.BuildDocke
 	buildArguments := make(map[string]string)
 	buildArguments["GIT_SHA"] = tag
 
-	// Generate replace commands for go.mod modifications
+	// Generate replacement specs for go.mod modifications.
 	replaceCmd := generateMultipleReplaces(req)
 
 	// When load testing CometBFT, we build a simapp image using a specified SDK version, and then edit go.mod to replace

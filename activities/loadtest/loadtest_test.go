@@ -3,6 +3,7 @@ package loadtest
 import (
 	"context"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,4 +69,30 @@ func TestGenerateSpec(t *testing.T) {
 	require.Equal(t, len(nodes), len(gotLoadtestSpec.ChainCfg.(*ethtypes.ChainConfig).NodesAddresses))
 	require.Equal(t, gotLoadtestSpec.BaseMnemonic, baseMnemonic)
 	require.Equal(t, gotLoadtestSpec.NumWallets, numWallets)
+}
+
+func TestRedactLoadTestConfigRemovesBaseMnemonic(t *testing.T) {
+	config := []byte("name: test\nbase_mnemonic: secret words\nnum_wallets: 10\n")
+
+	redacted, err := redactLoadTestConfig(config)
+	require.NoError(t, err)
+	require.NotContains(t, redacted, "secret words")
+	require.Contains(t, redacted, "base_mnemonic: '[REDACTED]'")
+	require.Contains(t, redacted, "num_wallets: 10")
+}
+
+func TestTruncateTaskLogsKeepsShortLogs(t *testing.T) {
+	logs := "short catalyst log"
+
+	require.Equal(t, logs, truncateTaskLogs(logs, maxLoadTestTaskLogBytes))
+}
+
+func TestTruncateTaskLogsCapsLongLogsAtTail(t *testing.T) {
+	logs := strings.Repeat("a", 128) + "important tail"
+
+	truncated := truncateTaskLogs(logs, 64)
+
+	require.Len(t, truncated, 64)
+	require.Contains(t, truncated, "showing tail")
+	require.True(t, strings.HasSuffix(truncated, "important tail"))
 }

@@ -26,8 +26,13 @@ RUN git clone $CHAIN_SRC /src/app && \
     git checkout $CHAIN_TAG
 
 WORKDIR /src/app
-RUN echo "$REPLACE_CMD" > replace_cmd.sh
-RUN chmod +x replace_cmd.sh && sh replace_cmd.sh
+RUN if [ -n "$REPLACE_CMD" ]; then \
+        echo "Applying module replacements:" && \
+        for replace in $REPLACE_CMD; do \
+            echo "go mod edit -replace ${replace}" && \
+            go mod edit -replace "$replace"; \
+        done; \
+    fi
 RUN cat go.mod
 RUN go mod tidy
     
