@@ -69,3 +69,13 @@ func TestGenerateSpec(t *testing.T) {
 	require.Equal(t, gotLoadtestSpec.BaseMnemonic, baseMnemonic)
 	require.Equal(t, gotLoadtestSpec.NumWallets, numWallets)
 }
+
+func TestRedactLoadTestConfigRemovesBaseMnemonic(t *testing.T) {
+	config := []byte("name: test\nbase_mnemonic: secret words\nnum_wallets: 10\n")
+
+	redacted, err := redactLoadTestConfig(config)
+	require.NoError(t, err)
+	require.NotContains(t, redacted, "secret words")
+	require.Contains(t, redacted, "base_mnemonic: '[REDACTED]'")
+	require.Contains(t, redacted, "num_wallets: 10")
+}

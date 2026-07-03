@@ -186,7 +186,11 @@ func (a *Activity) RunLoadTest(ctx context.Context, req messages.RunLoadTestRequ
 	if err != nil {
 		return handleLoadTestError(ctx, logger, p, chain, err, "failed to generate load test config")
 	}
-	loadTestConfig := string(configBytes)
+	loadTestConfig, err := redactLoadTestConfig(configBytes)
+	if err != nil {
+		logger.Warn("failed to redact load test config", zap.Error(err))
+		loadTestConfig = fmt.Sprintf("failed to redact load test config: %v", err)
+	}
 
 	catalystImage := "ghcr.io/skip-mev/catalyst"
 	if req.CatalystVersion != "" {
@@ -290,6 +294,21 @@ func (a *Activity) RunLoadTest(ctx context.Context, req messages.RunLoadTestRequ
 			}, nil
 		}
 	}
+}
+
+func redactLoadTestConfig(configBytes []byte) (string, error) {
+	var cfg map[string]interface{}
+	if err := yaml.Unmarshal(configBytes, &cfg); err != nil {
+		return "", err
+	}
+	if _, ok := cfg["base_mnemonic"]; ok {
+		cfg["base_mnemonic"] = "[REDACTED]"
+	}
+	redacted, err := yaml.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+	return string(redacted), nil
 }
 
 type loggableTask interface {

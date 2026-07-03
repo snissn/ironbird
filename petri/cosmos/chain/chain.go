@@ -934,7 +934,8 @@ func UpdateGenesisAccounts(accounts []Account, genesisData map[string]any) (map[
 	return genesisData, nil
 }
 
-// builds wallets from the baseMnemonic, with a bipPassphrase of [0,numAdditionalAccounts)
+// builds wallets from the baseMnemonic. Cosmos accounts use integer BIP39 passphrases;
+// the first EVM account uses an empty passphrase to match Catalyst wallet derivation.
 func buildAccounts(walletCfg petritypes.WalletConfig, baseMnemonic string, startingAccNum, numAdditionalAccs int) ([]Account, error) {
 	accounts := make([]Account, 0, numAdditionalAccs)
 	for i := range numAdditionalAccs {
