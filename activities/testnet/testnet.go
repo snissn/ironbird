@@ -166,7 +166,7 @@ func (a *Activity) updateWorkflowData(ctx context.Context, workflowID string, no
 func (a *Activity) LaunchTestnet(ctx context.Context, req messages.LaunchTestnetRequest) (resp messages.LaunchTestnetResponse, err error) {
 	logger, _ := zap.NewDevelopment()
 
-	workflowID := activity.GetInfo(ctx).WorkflowExecution.ID
+	workflowID := workflowIDFromActivityContext(ctx)
 	startTime := time.Now()
 
 	p, err := util.RestoreProvider(ctx, logger, req.RunnerType, req.ProviderState, util.ProviderOptions{
@@ -315,6 +315,18 @@ func (a *Activity) LaunchTestnet(ctx context.Context, req messages.LaunchTestnet
 	return resp, nil
 }
 
+func workflowIDFromActivityContext(ctx context.Context) (workflowID string) {
+	defer func() {
+		if workflowID == "" {
+			workflowID = "local"
+		}
+		_ = recover()
+	}()
+
+	info := activity.GetInfo(ctx)
+	return info.WorkflowExecution.ID
+}
+
 func constructChainConfig(req messages.LaunchTestnetRequest,
 	chains types.Chains,
 ) (petritypes.ChainConfig, petritypes.WalletConfig) {
@@ -342,6 +354,7 @@ func constructChainConfig(req messages.LaunchTestnetRequest,
 		CustomAppConfig:       req.CustomAppConfig,
 		CustomConsensusConfig: req.CustomConsensusConfig,
 		CustomClientConfig:    req.CustomClientConfig,
+		AdditionalStartFlags:  append([]string{}, req.AdditionalStartFlags...),
 		SetPersistentPeers:    req.SetPersistentPeers,
 		SetSeedNode:           req.SetSeedNode,
 		RegionConfig:          req.RegionConfigs,
@@ -354,12 +367,12 @@ func constructChainConfig(req messages.LaunchTestnetRequest,
 		config.IsEVMChain = true
 		config.ChainId = chainID
 		config.CoinType = "60"
-		config.AdditionalStartFlags = []string{
+		config.AdditionalStartFlags = append(config.AdditionalStartFlags,
 			"--json-rpc.api", "eth,net,web3,txpool,debug",
 			"--json-rpc.address", "0.0.0.0:8545",
 			"--json-rpc.ws-address", "0.0.0.0:8546",
 			"--json-rpc.enable",
-		}
+		)
 		config.AdditionalPorts = []string{"8545", "8546", "8100"} // geth rpc, geth ws rpc, evmd geth metrics
 		walletConfig = EvmCosmosWalletConfig
 		if config.CustomAppConfig == nil {

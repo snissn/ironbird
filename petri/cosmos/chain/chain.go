@@ -939,7 +939,7 @@ func buildAccounts(walletCfg petritypes.WalletConfig, baseMnemonic string, start
 	accounts := make([]Account, 0, numAdditionalAccs)
 	for i := range numAdditionalAccs {
 		keyName := fmt.Sprintf("additionalaccount%d", i)
-		w, err := wallet.NewWallet(keyName, baseMnemonic, fmt.Sprintf("%d", i), walletCfg)
+		w, err := wallet.NewWallet(keyName, baseMnemonic, additionalAccountPassphrase(walletCfg, i), walletCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create wallet %d: %w", i+1, err)
 		}
@@ -953,6 +953,13 @@ func buildAccounts(walletCfg petritypes.WalletConfig, baseMnemonic string, start
 		accounts = append(accounts, account)
 	}
 	return accounts, nil
+}
+
+func additionalAccountPassphrase(walletCfg petritypes.WalletConfig, index int) string {
+	if index == 0 && walletCfg.SigningAlgorithm == "eth_secp256k1" {
+		return ""
+	}
+	return strconv.Itoa(index)
 }
 
 // builds a balance slice for the accounts and funds.

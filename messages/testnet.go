@@ -56,6 +56,7 @@ type LaunchTestnetRequest struct {
 	CustomAppConfig       map[string]interface{}
 	CustomConsensusConfig map[string]interface{}
 	CustomClientConfig    map[string]interface{}
+	AdditionalStartFlags  []string
 
 	ProviderState      []byte
 	SetPersistentPeers bool

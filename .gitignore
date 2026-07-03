@@ -4,6 +4,7 @@
 .idea/**
 .vscode
 build/
+reports/artifacts/
 *.db*
 **/.DS_Store
 **/*.pkr.hcl

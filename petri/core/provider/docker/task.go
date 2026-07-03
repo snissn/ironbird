@@ -106,6 +106,25 @@ func (t *Task) Destroy(ctx context.Context) error {
 	return nil
 }
 
+func (t *Task) Logs(ctx context.Context) (string, error) {
+	state := t.GetState()
+	buf, err := t.dockerClient.ContainerLogs(ctx, state.Id, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       "all",
+	})
+	if err != nil {
+		return "", err
+	}
+	defer buf.Close()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, buf); err != nil {
+		return "", err
+	}
+	return stdout.String() + stderr.String(), nil
+}
+
 func (t *Task) GetExternalAddress(ctx context.Context, port string) (string, error) {
 	state := t.GetState()
 

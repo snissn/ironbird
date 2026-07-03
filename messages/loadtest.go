@@ -16,7 +16,9 @@ type RunLoadTestRequest struct {
 }
 
 type RunLoadTestResponse struct {
-	ProviderState []byte
-	ChainState    []byte
-	Result        catalysttypes.LoadTestResult
+	ProviderState  []byte
+	ChainState     []byte
+	Result         catalysttypes.LoadTestResult
+	TaskLogs       string
+	LoadTestConfig string
 }

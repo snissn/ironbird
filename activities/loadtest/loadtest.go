@@ -186,6 +186,7 @@ func (a *Activity) RunLoadTest(ctx context.Context, req messages.RunLoadTestRequ
 	if err != nil {
 		return handleLoadTestError(ctx, logger, p, chain, err, "failed to generate load test config")
 	}
+	loadTestConfig := string(configBytes)
 
 	catalystImage := "ghcr.io/skip-mev/catalyst"
 	if req.CatalystVersion != "" {
@@ -250,6 +251,8 @@ func (a *Activity) RunLoadTest(ctx context.Context, req messages.RunLoadTestRequ
 			}
 			logger.Info("load test completed successfully", zap.Any("result", result))
 
+			taskLogs := readTaskLogs(ctx, logger, task)
+
 			if err := task.Destroy(ctx); err != nil {
 				logger.Error("failed to destroy task after successful completion", zap.Error(err))
 			}
@@ -257,32 +260,51 @@ func (a *Activity) RunLoadTest(ctx context.Context, req messages.RunLoadTestRequ
 			newProviderState, err := p.SerializeProvider(ctx)
 			if err != nil {
 				logger.Error("failed to serialize provider after successful run", zap.Error(err))
-				return messages.RunLoadTestResponse{Result: result}, fmt.Errorf("load test succeeded, but failed to serialize provider: %w", err)
+				return messages.RunLoadTestResponse{Result: result, TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test succeeded, but failed to serialize provider: %w", err)
 			}
 
 			compressedProviderState, err := util.CompressData(newProviderState)
 			if err != nil {
 				logger.Error("failed to compress provider state after successful run", zap.Error(err))
-				return messages.RunLoadTestResponse{Result: result}, fmt.Errorf("load test succeeded, but failed to compress provider state: %w", err)
+				return messages.RunLoadTestResponse{Result: result, TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test succeeded, but failed to compress provider state: %w", err)
 			}
 
 			newChainState, err := chain.Serialize(ctx, p)
 			if err != nil {
 				logger.Error("failed to serialize chain after successful run", zap.Error(err))
-				return messages.RunLoadTestResponse{ProviderState: compressedProviderState, Result: result}, fmt.Errorf("load test succeeded, but failed to serialize chain: %w", err)
+				return messages.RunLoadTestResponse{ProviderState: compressedProviderState, Result: result, TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test succeeded, but failed to serialize chain: %w", err)
 			}
 
 			compressedChainState, err := util.CompressData(newChainState)
 			if err != nil {
 				logger.Error("failed to compress chain state after successful run", zap.Error(err))
-				return messages.RunLoadTestResponse{ProviderState: compressedProviderState, Result: result}, fmt.Errorf("load test succeeded, but failed to compress chain state: %w", err)
+				return messages.RunLoadTestResponse{ProviderState: compressedProviderState, Result: result, TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test succeeded, but failed to compress chain state: %w", err)
 			}
 
 			return messages.RunLoadTestResponse{
-				ProviderState: compressedProviderState,
-				ChainState:    compressedChainState,
-				Result:        result,
+				ProviderState:  compressedProviderState,
+				ChainState:     compressedChainState,
+				Result:         result,
+				TaskLogs:       taskLogs,
+				LoadTestConfig: loadTestConfig,
 			}, nil
 		}
 	}
+}
+
+type loggableTask interface {
+	Logs(context.Context) (string, error)
+}
+
+func readTaskLogs(ctx context.Context, logger *zap.Logger, task provider.TaskI) string {
+	logTask, ok := task.(loggableTask)
+	if !ok {
+		return ""
+	}
+	logs, err := logTask.Logs(ctx)
+	if err != nil {
+		logger.Warn("failed to read task logs", zap.Error(err))
+		return ""
+	}
+	return logs
 }
