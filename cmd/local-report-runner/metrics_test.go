@@ -326,6 +326,44 @@ func TestCorrectedLoadTestUsesAppMetricsWhenAuditSkipped(t *testing.T) {
 	}
 }
 
+func TestCorrectedLoadTestStoppedUsesAcceptedLoadWindowCounts(t *testing.T) {
+	result := runResult{
+		RawTxAuditSkipped: "disabled by test",
+		LoadTestStopped:   "load window reached",
+		StorageSignals: []storageSignal{{
+			Name:                   "validator-0",
+			ConsensusTotalTxsDelta: 125,
+			SDKTxCountDelta:        125,
+			SDKTxSuccessfulDelta:   125,
+		}},
+		LoadWindow: &loadWindowObservation{
+			TargetTransactions:     100,
+			MinimumSeconds:         10,
+			DurationSatisfied:      true,
+			Reached:                true,
+			Seconds:                20,
+			IncludedTransactions:   100,
+			SuccessfulTransactions: 100,
+		},
+	}
+	got := summarizeCorrectedLoadTest(result)
+	if got == nil {
+		t.Fatalf("corrected summary was nil")
+	}
+	if got.IncludedTransactions != 100 || got.SuccessfulTransactions != 100 || got.TotalTransactions != 100 {
+		t.Fatalf("corrected counts = total %d included %d success %d, want 100/100/100", got.TotalTransactions, got.IncludedTransactions, got.SuccessfulTransactions)
+	}
+	if got.RuntimeSeconds != 20 {
+		t.Fatalf("runtime seconds = %v, want 20", got.RuntimeSeconds)
+	}
+	if got.TPS != 5 {
+		t.Fatalf("tps = %v, want 5", got.TPS)
+	}
+	if !got.CatalystMismatch {
+		t.Fatalf("expected catalyst mismatch")
+	}
+}
+
 func TestCorrectedLoadTestKeepsValidCatalystCounts(t *testing.T) {
 	result := runResult{
 		LoadTestResult: ctlt.LoadTestResult{
@@ -482,6 +520,30 @@ func TestLoadWindowAcceptedAllowsZeroMinimum(t *testing.T) {
 	}
 	if !loadWindowAccepted(&loadWindowObservation{Reached: true, MinimumSeconds: 120, DurationSatisfied: true}) {
 		t.Fatalf("duration-satisfied load window should be accepted")
+	}
+}
+
+func TestLoadWindowTargetTransactionsUsesCeilingAndClamps(t *testing.T) {
+	tests := []struct {
+		name     string
+		intended int
+		fraction float64
+		want     int
+	}{
+		{name: "strict", intended: 50000, fraction: 1, want: 50000},
+		{name: "fraction", intended: 50000, fraction: 0.995, want: 49750},
+		{name: "ceiling", intended: 101, fraction: 0.995, want: 101},
+		{name: "minimum one", intended: 1, fraction: 0.5, want: 1},
+		{name: "zero intended", intended: 0, fraction: 0.995, want: 0},
+		{name: "invalid low fraction", intended: 50000, fraction: 0, want: 50000},
+		{name: "invalid high fraction", intended: 50000, fraction: 1.1, want: 50000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := loadWindowTargetTransactions(tt.intended, tt.fraction); got != tt.want {
+				t.Fatalf("loadWindowTargetTransactions(%d, %v) = %d, want %d", tt.intended, tt.fraction, got, tt.want)
+			}
+		})
 	}
 }
 

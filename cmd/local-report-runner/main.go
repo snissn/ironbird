@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"math/big"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -112,6 +114,7 @@ type runResult struct {
 	LoadTestResult      ctlt.LoadTestResult    `json:"load_test_result"`
 	LoadTestConfig      string                 `json:"load_test_config,omitempty"`
 	LoadTestLogs        string                 `json:"load_test_logs,omitempty"`
+	LoadTestStopped     string                 `json:"load_test_stopped,omitempty"`
 	LoadTestLogSummary  loadTestLogSummary     `json:"load_test_log_summary,omitempty"`
 	CorrectedLoadTest   *correctedLoadTest     `json:"corrected_load_test,omitempty"`
 	CommitBenchmark     *commitBenchmark       `json:"commit_benchmark,omitempty"`
@@ -515,6 +518,8 @@ func main() {
 		rawTxAudit                  = flag.Bool("raw-tx-audit", true, "when true, verify non-EVM tx inclusion with post-load CometBFT /tx queries; disable for clean app CPU profiles")
 		loadWindowDrainTimeout      = flag.Duration("load-window-drain-timeout", 0, "optional extra time to keep the chain running after Catalyst exits so app metrics can reach the load-window target")
 		loadWindowMinDuration       = flag.Duration("load-window-min-duration", 0, "minimum app-metric load-window duration required for final throughput evidence; short reached windows are annotated invalid")
+		loadWindowTargetFraction    = flag.Float64("load-window-target-fraction", 1.0, "fraction of intended transactions required before the app-metric load-window target can be marked reached")
+		stopCatalystAfterLoadWindow = flag.Bool("stop-catalyst-after-load-window", false, "stop the Catalyst task once app metrics reach the load-window target, avoiding Catalyst post-load tx lookup")
 		cpuprofile                  = flag.String("cpuprofile", "", "write local runner CPU profile to file")
 		memprofile                  = flag.String("memprofile", "", "write local runner heap profile to file")
 		blockprofile                = flag.String("blockprofile", "", "write local runner block profile to file")
@@ -575,6 +580,9 @@ func main() {
 		celestiaDryRun              = flag.Bool("celestia-dry-run", false, "for celestia-sync-ab, write env files and artifact metadata without executing the sync")
 	)
 	flag.Parse()
+	if *loadWindowTargetFraction <= 0 || *loadWindowTargetFraction > 1 {
+		fatalf("-load-window-target-fraction must be > 0 and <= 1, got %v", *loadWindowTargetFraction)
+	}
 	preseed := makePreseedConfig(*preseedProfile, *preseedAccounts, *wallets)
 	celestiaConfig := celestiaSyncConfig{
 		RunnerScript:                   *celestiaABScript,
@@ -654,7 +662,7 @@ func main() {
 		if sc.Runner == "celestia-sync-ab" {
 			result = runCelestiaSyncScenario(ctx, sc)
 		} else {
-			result = runScenario(ctx, workerConfig, sc, *skipBuild, *keepTestnets, *commitBenchBlocks, *appCPUProfileDir, *appHeapProfileDir, *rawTxAudit, *loadWindowDrainTimeout, *loadWindowMinDuration)
+			result = runScenario(ctx, workerConfig, sc, *skipBuild, *keepTestnets, *commitBenchBlocks, *appCPUProfileDir, *appHeapProfileDir, *rawTxAudit, *loadWindowDrainTimeout, *loadWindowMinDuration, *loadWindowTargetFraction, *stopCatalystAfterLoadWindow)
 		}
 		artifact.Results = append(artifact.Results, result)
 		if result.Error != "" {
@@ -1092,7 +1100,7 @@ func launchGenesisAccounts(sc scenario) int {
 	return sc.NumWallets
 }
 
-func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appCPUProfileDir, appHeapProfileDir string, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration) (result runResult) {
+func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appCPUProfileDir, appHeapProfileDir string, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration, loadWindowTargetFraction float64, stopCatalystAfterLoadWindow bool) (result runResult) {
 	result.Scenario = sc
 	result.StartedAt = time.Now()
 	result.ProviderName = fmt.Sprintf("ib%s%s", shortChainName(sc.Name), strings.ToLower(coreutil.RandomString(4)))
@@ -1241,10 +1249,24 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 		}
 		return result
 	}
-	loadActivity := &loadtest.Activity{}
 	var windowMonitor *loadWindowMonitor
-	if !sc.IsEVMChain && intendedTransactions(sc) > 0 {
-		windowMonitor = startLoadWindowMonitor(ctx, result.ProviderName, result.MetricsBefore, intendedTransactions(sc), loadWindowMinDuration, 500*time.Millisecond)
+	intendedTxs := intendedTransactions(sc)
+	if !sc.IsEVMChain && intendedTxs > 0 {
+		targetTxs := loadWindowTargetTransactions(intendedTxs, loadWindowTargetFraction)
+		windowMonitor = startLoadWindowMonitor(ctx, result.ProviderName, result.MetricsBefore, targetTxs, loadWindowMinDuration, 500*time.Millisecond)
+	}
+	loadActivity := &loadtest.Activity{}
+	if stopCatalystAfterLoadWindow && windowMonitor != nil {
+		loadActivity.StopCondition = func(context.Context) (bool, string) {
+			obs := windowMonitor.Last()
+			if !obs.Reached {
+				return false, ""
+			}
+			if obs.DurationSatisfied {
+				return true, fmt.Sprintf("load window reached: %d successful tx in %.3fs", obs.SuccessfulTransactions, obs.Seconds)
+			}
+			return true, fmt.Sprintf("load window reached too quickly: %d successful tx in %.3fs below %.3fs minimum", obs.SuccessfulTransactions, obs.Seconds, obs.MinimumSeconds)
+		}
 	}
 	endPhase = startPhase(&result, "run_load_test", fmt.Sprintf("wallets=%d", sc.NumWallets))
 	loadResp, err := loadActivity.RunLoadTest(ctx, messages.RunLoadTestRequest{
@@ -1286,6 +1308,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	result.LoadTestResult = loadResp.Result
 	result.LoadTestConfig = loadResp.LoadTestConfig
 	result.LoadTestLogs = trimLog(loadResp.TaskLogs, 40000)
+	result.LoadTestStopped = loadResp.StoppedReason
 	result.LoadTestLogSummary = summarizeLoadTestLogs(loadResp.TaskLogs)
 	if !sc.IsEVMChain && rawTxAudit {
 		endPhase = startPhase(&result, "raw_tx_audit", "")
@@ -1304,6 +1327,13 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 		providerStateForTeardown = loadResp.ProviderState
 	}
 	if err != nil {
+		var stopped *loadtest.StoppedByConditionError
+		if errors.As(err, &stopped) && stopCatalystAfterLoadWindow && loadWindowAccepted(result.LoadWindow) {
+			if result.LoadTestStopped == "" {
+				result.LoadTestStopped = stopped.Reason
+			}
+			return result
+		}
 		result.Error = fmt.Sprintf("run load test: %v", err)
 		return result
 	}
@@ -1781,6 +1811,23 @@ func phaseSeconds(result runResult, name string) float64 {
 type loadWindowMonitor struct {
 	cancel context.CancelFunc
 	done   <-chan loadWindowObservation
+	mu     sync.Mutex
+	last   loadWindowObservation
+}
+
+func (m *loadWindowMonitor) Last() loadWindowObservation {
+	if m == nil {
+		return loadWindowObservation{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.last
+}
+
+func (m *loadWindowMonitor) setLast(obs loadWindowObservation) {
+	m.mu.Lock()
+	m.last = obs
+	m.mu.Unlock()
 }
 
 func (m *loadWindowMonitor) Stop() loadWindowObservation {
@@ -1811,7 +1858,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 	started := time.Now()
 	if targetTransactions <= 0 {
 		done := make(chan loadWindowObservation, 1)
-		done <- loadWindowObservation{
+		obs := loadWindowObservation{
 			TargetTransactions: targetTransactions,
 			MinimumSeconds:     minDuration.Seconds(),
 			DurationSatisfied:  minDuration <= 0,
@@ -1819,10 +1866,14 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 			EndedAt:            time.Now(),
 			Error:              "target transaction count is not positive",
 		}
-		return &loadWindowMonitor{cancel: func() {}, done: done}
+		done <- obs
+		monitor := &loadWindowMonitor{cancel: func() {}, done: done}
+		monitor.setLast(obs)
+		return monitor
 	}
 	monitorCtx, cancel := context.WithCancel(ctx)
 	done := make(chan loadWindowObservation, 1)
+	monitor := &loadWindowMonitor{cancel: cancel, done: done}
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -1858,6 +1909,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 		}
 		for {
 			last = observe()
+			monitor.setLast(last)
 			if last.Reached {
 				done <- last
 				return
@@ -1868,12 +1920,13 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 				if last.Error == "" {
 					last.Error = monitorCtx.Err().Error()
 				}
+				monitor.setLast(last)
 				done <- last
 				return
 			}
 		}
 	}()
-	return &loadWindowMonitor{cancel: cancel, done: done}
+	return monitor
 }
 
 func collectAppProfiles(ctx context.Context, providerState, chainState []byte, sc scenario, cpuOutDir, heapOutDir string) []profileArtifact {
@@ -2870,6 +2923,25 @@ func summarizeCorrectedLoadTest(result runResult) *correctedLoadTest {
 	if result.RawTxAuditSkipped != "" {
 		out.Notes = append(out.Notes, result.RawTxAuditSkipped)
 	}
+	if out.RuntimeSeconds == 0 && result.LoadTestStopped != "" && loadWindowAccepted(result.LoadWindow) {
+		if result.LoadWindow.IncludedTransactions > 0 {
+			out.IncludedTransactions = result.LoadWindow.IncludedTransactions
+		}
+		if result.LoadWindow.SuccessfulTransactions > 0 {
+			out.SuccessfulTransactions = result.LoadWindow.SuccessfulTransactions
+		}
+		windowTotal := out.IncludedTransactions
+		if windowTotal < out.SuccessfulTransactions {
+			windowTotal = out.SuccessfulTransactions
+		}
+		if windowTotal > 0 {
+			out.TotalTransactions = windowTotal
+		}
+		out.FailedTransactions = nonNegativeInt(out.TotalTransactions - out.SuccessfulTransactions)
+		out.RuntimeSeconds = result.LoadWindow.Seconds
+		out.TPS = float64(out.SuccessfulTransactions) / out.RuntimeSeconds
+		out.Notes = append(out.Notes, "runtime and counts use accepted app-metric load-window because Catalyst was stopped before result collection")
+	}
 	if out.RuntimeSeconds == 0 && out.TPS > 0 && out.SuccessfulTransactions > 0 {
 		out.RuntimeSeconds = float64(out.SuccessfulTransactions) / out.TPS
 	}
@@ -3101,6 +3173,23 @@ func loadWindowAccepted(obs *loadWindowObservation) bool {
 		return false
 	}
 	return obs.MinimumSeconds <= 0 || obs.DurationSatisfied
+}
+
+func loadWindowTargetTransactions(intended int, fraction float64) int {
+	if intended <= 0 {
+		return intended
+	}
+	if fraction <= 0 || fraction > 1 {
+		return intended
+	}
+	target := int(math.Ceil(float64(intended) * fraction))
+	if target < 1 {
+		return 1
+	}
+	if target > intended {
+		return intended
+	}
+	return target
 }
 
 func intendedTransactions(sc scenario) int {
