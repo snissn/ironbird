@@ -16,7 +16,7 @@ PRESEED_ACCOUNTS="${PRESEED_ACCOUNTS:-100000}"
 SKIP_BUILD="${SKIP_BUILD:-true}"
 TMPDIR="${TMPDIR:-/mnt/fast4tb/tmp}"
 
-mkdir -p "$OUT_ROOT"
+mkdir -p "$OUT_ROOT" "$(dirname "$RUNNER")" "$TMPDIR"
 
 if [[ ! -x "$RUNNER" || "${REBUILD_RUNNER:-false}" == "true" ]]; then
   (cd "$ROOT" && GOWORK=off go build -o "$RUNNER" ./cmd/local-report-runner)

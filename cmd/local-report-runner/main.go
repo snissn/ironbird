@@ -2924,9 +2924,23 @@ func summarizeCorrectedLoadTest(result runResult) *correctedLoadTest {
 		out.Notes = append(out.Notes, result.RawTxAuditSkipped)
 	}
 	if out.RuntimeSeconds == 0 && result.LoadTestStopped != "" && loadWindowAccepted(result.LoadWindow) {
+		if result.LoadWindow.IncludedTransactions > 0 {
+			out.IncludedTransactions = result.LoadWindow.IncludedTransactions
+		}
+		if result.LoadWindow.SuccessfulTransactions > 0 {
+			out.SuccessfulTransactions = result.LoadWindow.SuccessfulTransactions
+		}
+		windowTotal := out.IncludedTransactions
+		if windowTotal < out.SuccessfulTransactions {
+			windowTotal = out.SuccessfulTransactions
+		}
+		if windowTotal > 0 {
+			out.TotalTransactions = windowTotal
+		}
+		out.FailedTransactions = nonNegativeInt(out.TotalTransactions - out.SuccessfulTransactions)
 		out.RuntimeSeconds = result.LoadWindow.Seconds
 		out.TPS = float64(out.SuccessfulTransactions) / out.RuntimeSeconds
-		out.Notes = append(out.Notes, "runtime uses accepted app-metric load-window because Catalyst was stopped before result collection")
+		out.Notes = append(out.Notes, "runtime and counts use accepted app-metric load-window because Catalyst was stopped before result collection")
 	}
 	if out.RuntimeSeconds == 0 && out.TPS > 0 && out.SuccessfulTransactions > 0 {
 		out.RuntimeSeconds = float64(out.SuccessfulTransactions) / out.TPS

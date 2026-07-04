@@ -326,6 +326,44 @@ func TestCorrectedLoadTestUsesAppMetricsWhenAuditSkipped(t *testing.T) {
 	}
 }
 
+func TestCorrectedLoadTestStoppedUsesAcceptedLoadWindowCounts(t *testing.T) {
+	result := runResult{
+		RawTxAuditSkipped: "disabled by test",
+		LoadTestStopped:   "load window reached",
+		StorageSignals: []storageSignal{{
+			Name:                   "validator-0",
+			ConsensusTotalTxsDelta: 125,
+			SDKTxCountDelta:        125,
+			SDKTxSuccessfulDelta:   125,
+		}},
+		LoadWindow: &loadWindowObservation{
+			TargetTransactions:     100,
+			MinimumSeconds:         10,
+			DurationSatisfied:      true,
+			Reached:                true,
+			Seconds:                20,
+			IncludedTransactions:   100,
+			SuccessfulTransactions: 100,
+		},
+	}
+	got := summarizeCorrectedLoadTest(result)
+	if got == nil {
+		t.Fatalf("corrected summary was nil")
+	}
+	if got.IncludedTransactions != 100 || got.SuccessfulTransactions != 100 || got.TotalTransactions != 100 {
+		t.Fatalf("corrected counts = total %d included %d success %d, want 100/100/100", got.TotalTransactions, got.IncludedTransactions, got.SuccessfulTransactions)
+	}
+	if got.RuntimeSeconds != 20 {
+		t.Fatalf("runtime seconds = %v, want 20", got.RuntimeSeconds)
+	}
+	if got.TPS != 5 {
+		t.Fatalf("tps = %v, want 5", got.TPS)
+	}
+	if !got.CatalystMismatch {
+		t.Fatalf("expected catalyst mismatch")
+	}
+}
+
 func TestCorrectedLoadTestKeepsValidCatalystCounts(t *testing.T) {
 	result := runResult{
 		LoadTestResult: ctlt.LoadTestResult{
