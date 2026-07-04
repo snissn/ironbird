@@ -3,6 +3,7 @@ package loadtest
 import (
 	"context"
 	"math/big"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +12,9 @@ import (
 	ethtypes "github.com/skip-mev/catalyst/chains/ethereum/types"
 	"github.com/skip-mev/catalyst/chains/types"
 	"github.com/skip-mev/ironbird/activities/loadtest/mocks"
+	"github.com/skip-mev/ironbird/petri/core/provider"
 	types2 "github.com/skip-mev/ironbird/petri/core/types"
+	"github.com/skip-mev/ironbird/util"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 	"gopkg.in/yaml.v3"
@@ -81,6 +84,39 @@ func TestRedactLoadTestConfigRemovesBaseMnemonic(t *testing.T) {
 	require.Contains(t, redacted, "num_wallets: 10")
 }
 
+func TestStopLoadTestByConditionSerializesStateAndReturnsStopError(t *testing.T) {
+	ctx := context.Background()
+	logger := zaptest.NewLogger(t)
+	p := &fakeLoadTestProvider{state: []byte("provider-state")}
+	task := &fakeLoadTestTask{logs: "catalyst log tail"}
+	chainState := []byte("chain-state")
+	serializeChainCalled := false
+
+	res, err := stopLoadTestByCondition(ctx, logger, p, func(ctx context.Context, got provider.ProviderI) ([]byte, error) {
+		serializeChainCalled = true
+		require.Same(t, p, got)
+		return chainState, nil
+	}, task, "redacted-config", "accepted load window reached")
+
+	var stopped *StoppedByConditionError
+	require.ErrorAs(t, err, &stopped)
+	require.Equal(t, "accepted load window reached", stopped.Reason)
+	require.Equal(t, "accepted load window reached", res.StoppedReason)
+	require.Equal(t, "catalyst log tail", res.TaskLogs)
+	require.Equal(t, "redacted-config", res.LoadTestConfig)
+	require.True(t, task.destroyed)
+	require.True(t, p.serialized)
+	require.True(t, serializeChainCalled)
+
+	providerState, err := util.DecompressData(res.ProviderState)
+	require.NoError(t, err)
+	require.Equal(t, []byte("provider-state"), providerState)
+
+	gotChainState, err := util.DecompressData(res.ChainState)
+	require.NoError(t, err)
+	require.Equal(t, chainState, gotChainState)
+}
+
 func TestTruncateTaskLogsKeepsShortLogs(t *testing.T) {
 	logs := "short catalyst log"
 
@@ -95,4 +131,111 @@ func TestTruncateTaskLogsCapsLongLogsAtTail(t *testing.T) {
 	require.Len(t, truncated, 64)
 	require.Contains(t, truncated, "showing tail")
 	require.True(t, strings.HasSuffix(truncated, "important tail"))
+}
+
+type fakeLoadTestProvider struct {
+	state      []byte
+	serialized bool
+}
+
+var _ provider.ProviderI = (*fakeLoadTestProvider)(nil)
+
+func (p *fakeLoadTestProvider) CreateTask(context.Context, provider.TaskDefinition) (provider.TaskI, error) {
+	return nil, nil
+}
+
+func (p *fakeLoadTestProvider) SerializeTask(context.Context, provider.TaskI) ([]byte, error) {
+	return nil, nil
+}
+
+func (p *fakeLoadTestProvider) DeserializeTask(context.Context, []byte) (provider.TaskI, error) {
+	return nil, nil
+}
+
+func (p *fakeLoadTestProvider) Teardown(context.Context) error {
+	return nil
+}
+
+func (p *fakeLoadTestProvider) SerializeProvider(context.Context) ([]byte, error) {
+	p.serialized = true
+	return p.state, nil
+}
+
+func (p *fakeLoadTestProvider) GetType() string {
+	return "fake"
+}
+
+func (p *fakeLoadTestProvider) GetName() string {
+	return "fake"
+}
+
+type fakeLoadTestTask struct {
+	logs      string
+	destroyed bool
+}
+
+var _ provider.TaskI = (*fakeLoadTestTask)(nil)
+var _ loggableTask = (*fakeLoadTestTask)(nil)
+
+func (t *fakeLoadTestTask) Start(context.Context) error {
+	return nil
+}
+
+func (t *fakeLoadTestTask) Stop(context.Context) error {
+	return nil
+}
+
+func (t *fakeLoadTestTask) Destroy(context.Context) error {
+	t.destroyed = true
+	return nil
+}
+
+func (t *fakeLoadTestTask) GetDefinition() provider.TaskDefinition {
+	return provider.TaskDefinition{}
+}
+
+func (t *fakeLoadTestTask) GetStatus(context.Context) (provider.TaskStatus, error) {
+	return provider.TASK_RUNNING, nil
+}
+
+func (t *fakeLoadTestTask) Modify(context.Context, provider.TaskDefinition) error {
+	return nil
+}
+
+func (t *fakeLoadTestTask) WriteFile(context.Context, string, []byte) error {
+	return nil
+}
+
+func (t *fakeLoadTestTask) ReadFile(context.Context, string) ([]byte, error) {
+	return nil, nil
+}
+
+func (t *fakeLoadTestTask) DownloadDir(context.Context, string, string) error {
+	return nil
+}
+
+func (t *fakeLoadTestTask) GetIP(context.Context) (string, error) {
+	return "", nil
+}
+
+func (t *fakeLoadTestTask) GetPrivateIP(context.Context) (string, error) {
+	return "", nil
+}
+
+func (t *fakeLoadTestTask) GetExternalAddress(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (t *fakeLoadTestTask) DialContext() func(context.Context, string, string) (net.Conn, error) {
+	return func(context.Context, string, string) (net.Conn, error) {
+		return nil, nil
+	}
+}
+
+func (t *fakeLoadTestTask) RunCommand(context.Context, []string) (string, string, int, error) {
+	return "", "", 0, nil
+}
+
+func (t *fakeLoadTestTask) Logs(context.Context) (string, error) {
+	return t.logs, nil
 }

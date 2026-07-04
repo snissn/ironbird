@@ -90,6 +90,40 @@ type PetriChain interface {
 	GetNodes() []types.NodeI
 }
 
+type chainStateSerializer func(context.Context, provider.ProviderI) ([]byte, error)
+
+func stopLoadTestByCondition(ctx context.Context, logger *zap.Logger, p provider.ProviderI, serializeChain chainStateSerializer, task provider.TaskI, loadTestConfig string, reason string) (messages.RunLoadTestResponse, error) {
+	logger.Info("stopping load test task by condition", zap.String("reason", reason))
+	taskLogs := readTaskLogs(ctx, logger, task)
+	if err := task.Destroy(ctx); err != nil {
+		logger.Error("failed to destroy task after conditional stop", zap.Error(err))
+	}
+
+	newProviderState, err := p.SerializeProvider(ctx)
+	if err != nil {
+		return messages.RunLoadTestResponse{TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test stopped by condition, but failed to serialize provider: %w", err)
+	}
+	compressedProviderState, err := util.CompressData(newProviderState)
+	if err != nil {
+		return messages.RunLoadTestResponse{TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test stopped by condition, but failed to compress provider state: %w", err)
+	}
+	newChainState, err := serializeChain(ctx, p)
+	if err != nil {
+		return messages.RunLoadTestResponse{ProviderState: compressedProviderState, TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test stopped by condition, but failed to serialize chain: %w", err)
+	}
+	compressedChainState, err := util.CompressData(newChainState)
+	if err != nil {
+		return messages.RunLoadTestResponse{ProviderState: compressedProviderState, TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test stopped by condition, but failed to compress chain state: %w", err)
+	}
+	return messages.RunLoadTestResponse{
+		ProviderState:  compressedProviderState,
+		ChainState:     compressedChainState,
+		TaskLogs:       taskLogs,
+		LoadTestConfig: loadTestConfig,
+		StoppedReason:  reason,
+	}, &StoppedByConditionError{Reason: reason}
+}
+
 // TODO: this function is kind of confusing because we give it a half-baked loadtest spec, and then fill in the rest.
 // I'm not sure if there is a better/more clearer way to go about this, but it seems confusing as is.
 func generateLoadTestSpec(ctx context.Context, logger *zap.Logger, chain PetriChain, chainID string,
@@ -259,35 +293,7 @@ func (a *Activity) RunLoadTest(ctx context.Context, req messages.RunLoadTestRequ
 			if a.StopCondition != nil {
 				stop, reason := a.StopCondition(ctx)
 				if stop {
-					logger.Info("stopping load test task by condition", zap.String("reason", reason))
-					taskLogs := readTaskLogs(ctx, logger, task)
-					if err := task.Destroy(ctx); err != nil {
-						logger.Error("failed to destroy task after conditional stop", zap.Error(err))
-					}
-
-					newProviderState, err := p.SerializeProvider(ctx)
-					if err != nil {
-						return messages.RunLoadTestResponse{TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test stopped by condition, but failed to serialize provider: %w", err)
-					}
-					compressedProviderState, err := util.CompressData(newProviderState)
-					if err != nil {
-						return messages.RunLoadTestResponse{TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test stopped by condition, but failed to compress provider state: %w", err)
-					}
-					newChainState, err := chain.Serialize(ctx, p)
-					if err != nil {
-						return messages.RunLoadTestResponse{ProviderState: compressedProviderState, TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test stopped by condition, but failed to serialize chain: %w", err)
-					}
-					compressedChainState, err := util.CompressData(newChainState)
-					if err != nil {
-						return messages.RunLoadTestResponse{ProviderState: compressedProviderState, TaskLogs: taskLogs, LoadTestConfig: loadTestConfig}, fmt.Errorf("load test stopped by condition, but failed to compress chain state: %w", err)
-					}
-					return messages.RunLoadTestResponse{
-						ProviderState:  compressedProviderState,
-						ChainState:     compressedChainState,
-						TaskLogs:       taskLogs,
-						LoadTestConfig: loadTestConfig,
-						StoppedReason:  reason,
-					}, &StoppedByConditionError{Reason: reason}
+					return stopLoadTestByCondition(ctx, logger, p, chain.Serialize, task, loadTestConfig, reason)
 				}
 			}
 			status, err := task.GetStatus(ctx)

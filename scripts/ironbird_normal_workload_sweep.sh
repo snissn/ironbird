@@ -56,20 +56,8 @@ run_one() {
   profile_dir="$out_dir/pprof"
   mkdir -p "$profile_dir"
 
-  local skip_args=()
-  if [[ "$SKIP_BUILD" == "true" ]]; then
-    skip_args=(-skip-build)
-  fi
-  local stop_args=()
-  if [[ "$STOP_CATALYST_AFTER_LOAD_WINDOW" == "true" ]]; then
-    stop_args=(-stop-catalyst-after-load-window)
-  fi
-
-  log "running workload=$workload backend=$backend attempt=$attempt blocks=$blocks txs=$txs log=$out_dir/runner.log"
-  if ! TMPDIR="$TMPDIR" "$RUNNER" \
+  local runner_args=(
     -scenario "$scenario" \
-    "${skip_args[@]}" \
-    "${stop_args[@]}" \
     -validators "$VALIDATORS" -nodes "$NODES" -wallets "$WALLETS" \
     -preseed-profile accounts -preseed-accounts "$PRESEED_ACCOUNTS" \
     -cosmos-blocks "$blocks" -cosmos-txs "$txs" \
@@ -82,7 +70,17 @@ run_one() {
     -raw-tx-audit=false \
     -app-cpuprofile-dir "$profile_dir" \
     -app-heapprofile-dir "$profile_dir" \
-    -out "$out_json" >"$out_dir/runner.log" 2>&1; then
+    -out "$out_json"
+  )
+  if [[ "$SKIP_BUILD" == "true" ]]; then
+    runner_args+=(-skip-build)
+  fi
+  if [[ "$STOP_CATALYST_AFTER_LOAD_WINDOW" == "true" ]]; then
+    runner_args+=(-stop-catalyst-after-load-window)
+  fi
+
+  log "running workload=$workload backend=$backend attempt=$attempt blocks=$blocks txs=$txs log=$out_dir/runner.log"
+  if ! TMPDIR="$TMPDIR" "$RUNNER" "${runner_args[@]}" >"$out_dir/runner.log" 2>&1; then
     log "runner failed for workload=$workload backend=$backend attempt=$attempt; tail follows"
     tail -120 "$out_dir/runner.log" >&2 || true
     return 1
