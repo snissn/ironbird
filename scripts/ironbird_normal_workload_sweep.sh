@@ -7,6 +7,7 @@ OUT_ROOT="${OUT_ROOT:-$ROOT/reports/artifacts/normal-workload-sweep-$(date -u +%
 LOAD_WINDOW_MIN="${LOAD_WINDOW_MIN:-5m}"
 LOAD_WINDOW_TARGET_FRACTION="${LOAD_WINDOW_TARGET_FRACTION:-0.995}"
 DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-5m}"
+STOP_CATALYST_AFTER_LOAD_WINDOW="${STOP_CATALYST_AFTER_LOAD_WINDOW:-true}"
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
 VALIDATORS="${VALIDATORS:-1}"
 NODES="${NODES:-0}"
@@ -59,11 +60,16 @@ run_one() {
   if [[ "$SKIP_BUILD" == "true" ]]; then
     skip_args=(-skip-build)
   fi
+  local stop_args=()
+  if [[ "$STOP_CATALYST_AFTER_LOAD_WINDOW" == "true" ]]; then
+    stop_args=(-stop-catalyst-after-load-window)
+  fi
 
   log "running workload=$workload backend=$backend attempt=$attempt blocks=$blocks txs=$txs log=$out_dir/runner.log"
   if ! TMPDIR="$TMPDIR" "$RUNNER" \
     -scenario "$scenario" \
     "${skip_args[@]}" \
+    "${stop_args[@]}" \
     -validators "$VALIDATORS" -nodes "$NODES" -wallets "$WALLETS" \
     -preseed-profile accounts -preseed-accounts "$PRESEED_ACCOUNTS" \
     -cosmos-blocks "$blocks" -cosmos-txs "$txs" \

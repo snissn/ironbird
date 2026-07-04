@@ -21,4 +21,5 @@ type RunLoadTestResponse struct {
 	Result         catalysttypes.LoadTestResult
 	TaskLogs       string
 	LoadTestConfig string
+	StoppedReason  string
 }
