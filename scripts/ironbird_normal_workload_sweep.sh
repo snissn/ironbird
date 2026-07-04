@@ -86,9 +86,10 @@ run_one() {
     return 1
   fi
 
-  local reached duration_satisfied seconds successful runtime_tps load_window_tps wall_tps accepted
+  local reached duration_satisfied result_error seconds successful runtime_tps load_window_tps wall_tps accepted
   reached="$(json_bool '.results[0].load_window.reached' "$out_json")"
   duration_satisfied="$(json_bool '.results[0].load_window.duration_satisfied' "$out_json")"
+  result_error="$(jq -r 'if (.results[0].error == null) then "" else (.results[0].error | tostring) end' "$out_json")"
   seconds="$(json_num '.results[0].load_window.seconds' "$out_json")"
   successful="$(json_num '.results[0].corrected_load_test.successful_transactions' "$out_json")"
   runtime_tps="$(json_num '.results[0].derived_metrics.runtime_included_tps' "$out_json")"
@@ -96,7 +97,7 @@ run_one() {
   wall_tps="$(json_num '.results[0].derived_metrics.wall_included_tps' "$out_json")"
 
   accepted=false
-  if [[ "$reached" == "true" && "$duration_satisfied" == "true" ]]; then
+  if [[ "$reached" == "true" && "$duration_satisfied" == "true" && -z "$result_error" ]]; then
     accepted=true
   fi
 
