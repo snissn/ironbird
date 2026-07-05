@@ -93,6 +93,23 @@ func TestSimappFullStackScenarioSetsAppAndNodeBackends(t *testing.T) {
 	}
 }
 
+func TestSimappGomapPinOverride(t *testing.T) {
+	t.Setenv("IRONBIRD_SIMAPP_GOMAP_VERSION", "v0.6.2-0.20260705113501-82affd8d5b0e")
+	t.Setenv("IRONBIRD_SIMAPP_GOMAP_REF", "82affd8d5b0ecf73447203461dbddfaa939d2998")
+	t.Setenv("IRONBIRD_SIMAPP_GOMAP_IMAGE_SLUG", "audit-revertboth")
+
+	sc := simappFullStackScenario("simapp-treedb-all", "full stack TreeDB", "treedb", 1, 0, 100, preseedConfig{}, 2, 10, "MsgSend", "", 0, 0, 1000000, "")
+	if !strings.Contains(sc.ReplaceCmd, "github.com/snissn/gomap=github.com/snissn/gomap@v0.6.2-0.20260705113501-82affd8d5b0e") {
+		t.Fatalf("replace command missing gomap override: %s", sc.ReplaceCmd)
+	}
+	if sc.DependencyPins[1].Ref != "82affd8d5b0ecf73447203461dbddfaa939d2998" {
+		t.Fatalf("gomap ref = %q, want override", sc.DependencyPins[1].Ref)
+	}
+	if !strings.HasSuffix(sc.ImageTag, "gomap-audit-revertboth") {
+		t.Fatalf("image tag = %q, want gomap override slug", sc.ImageTag)
+	}
+}
+
 func TestSimappAppOnlyScenarioDoesNotSetNodeBackend(t *testing.T) {
 	sc := simappScenario("simapp-treedb", "app TreeDB", "treedb", 1, 0, 100, preseedConfig{}, 2, 10, "MsgSend", "", 0, 0, 1000000, "")
 	if sc.NodeDBBackend != "" {
