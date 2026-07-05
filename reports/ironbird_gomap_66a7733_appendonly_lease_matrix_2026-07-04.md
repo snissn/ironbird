@@ -126,13 +126,18 @@ Profile summaries:
 
 Command:
 
+When reproducing this historical `66a7733` run from a newer checkout, do not
+rebuild the runner from current HEAD. Either check out this report's commit
+before setting `REBUILD_RUNNER=true`, or keep `REBUILD_RUNNER=false` and use a
+runner binary that was already built with the `66a7733` gomap pin.
+
 ```sh
 RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)
 OUT_ROOT=/mnt/fast4tb/ironbird-normal-workload-sweep-gomap-66a7733-${RUN_ID}
 
 OUT_ROOT="$OUT_ROOT" \
 RUNNER=/mnt/fast4tb/tmp/local-report-runner-normal-66a7733 \
-REBUILD_RUNNER=true \
+REBUILD_RUNNER=false \
 SKIP_BUILD=false \
 LOAD_WINDOW_MIN=5m \
 LOAD_WINDOW_TARGET_FRACTION=0.995 \
@@ -280,7 +285,7 @@ arena used bytes" value.
 | Small multisend | TreeDB | 468.03 | 54.33 | 68.04 | 158.58 | 184.29 | 11.61% | 1.131x |
 | Moderate multisend | goleveldb | 431.03 | 26.70 | 88.92 | 175.76 | 136.48 | 6.20% | 1.066x |
 | Moderate multisend | TreeDB | 328.03 | 37.54 | 76.97 | 120.35 | 90.39 | 11.44% | 1.129x |
-| High fanout anchor | goleveldb | 758.03 | 8.24 | 63.96 | 363.11 | 0.00 | 1.67% | 1.017x |
+| High fanout anchor | goleveldb | 758.03 | 8.24 | 63.96 | 363.11 | 0.00 | 1.09% | 1.011x |
 | High fanout anchor | TreeDB | 691.55 | 18.89 | 143.70 | 379.08 | 0.00 | 2.73% | 1.028x |
 
 Commit is not invisible: TreeDB commit time is higher than goleveldb in every

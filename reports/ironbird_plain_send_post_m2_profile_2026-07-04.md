@@ -61,6 +61,11 @@ used `-skip-build`.
 
 ## Runtime Breakdown
 
+These buckets are diagnostic, not an additive partition of the 65s workload
+delta. Commit, FinalizeBlock, and CheckTx are observed from different runtime
+scopes and should be read as overlapping signals rather than rows that sum
+cleanly to the total gap.
+
 | Bucket | goleveldb | TreeDB | TreeDB delta |
 | --- | ---: | ---: | ---: |
 | Workload runtime | 338.03s | 403.03s | +65.00s |
@@ -174,4 +179,3 @@ Create and execute the next tracker child under `snissn/gomap#3475`:
 3. Add a focused microbenchmark or profile gate for repeated `WriteSync` /
    commit-like batch shapes.
 4. Rerun the same Ironbird plain-send A/B after the fix lands on `main`.
-
