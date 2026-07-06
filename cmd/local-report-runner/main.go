@@ -2624,6 +2624,9 @@ func parsePrometheusMetrics(text string) map[string]float64 {
 		if err != nil {
 			continue
 		}
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
 		metrics[fields[0]] = value
 	}
 	return metrics
@@ -2881,7 +2884,7 @@ func metricDeltaSnapshots(before, after []metricSnapshot) []metricDeltaSnapshot 
 				metricKeys[key] = struct{}{}
 			}
 		}
-		if len(metricKeys) > 0 {
+		if metricSnapshotsComparable(beforeSnap, afterSnap) && len(metricKeys) > 0 {
 			delta.Metrics = make(map[string]metricDeltaValue, len(metricKeys))
 			for key := range metricKeys {
 				var beforeValue, afterValue float64
@@ -2906,6 +2909,16 @@ func metricDeltaSnapshots(before, after []metricSnapshot) []metricDeltaSnapshot 
 		return nil
 	}
 	return out
+}
+
+func metricSnapshotsComparable(beforeSnap, afterSnap *metricSnapshot) bool {
+	if beforeSnap == nil || afterSnap == nil {
+		return false
+	}
+	if beforeSnap.Error != "" || afterSnap.Error != "" {
+		return false
+	}
+	return len(beforeSnap.Metrics) > 0 && len(afterSnap.Metrics) > 0
 }
 
 func appendSnapshotError(current, phase, errText string) string {
@@ -3844,29 +3857,31 @@ func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
 	}
 
 	rows := metricDeltaRows(obs.MetricDeltas)
-	if len(rows) == 0 {
+	errors := metricDeltaErrors(obs.MetricDeltas)
+	if len(rows) == 0 && len(errors) == 0 {
 		b.WriteString("No accepted-window metric deltas were recorded.\n\n")
 		return
 	}
-	b.WriteString("### Accepted-Window Metric Deltas\n\n")
-	b.WriteString("| Container | Metric | Before | After | Delta |\n")
-	b.WriteString("| --- | --- | ---: | ---: | ---: |\n")
-	for _, row := range rows {
-		b.WriteString("| ")
-		b.WriteString(mdCell(row.Container))
-		b.WriteString(" | ")
-		b.WriteString(mdCell(row.Metric))
-		b.WriteString(" | ")
-		b.WriteString(metricFloat(row.Before))
-		b.WriteString(" | ")
-		b.WriteString(metricFloat(row.After))
-		b.WriteString(" | ")
-		b.WriteString(metricFloat(row.Delta))
-		b.WriteString(" |\n")
+	if len(rows) > 0 {
+		b.WriteString("### Accepted-Window Metric Deltas\n\n")
+		b.WriteString("| Container | Metric | Before | After | Delta |\n")
+		b.WriteString("| --- | --- | ---: | ---: | ---: |\n")
+		for _, row := range rows {
+			b.WriteString("| ")
+			b.WriteString(mdCell(row.Container))
+			b.WriteString(" | ")
+			b.WriteString(mdCell(row.Metric))
+			b.WriteString(" | ")
+			b.WriteString(metricFloat(row.Before))
+			b.WriteString(" | ")
+			b.WriteString(metricFloat(row.After))
+			b.WriteString(" | ")
+			b.WriteString(metricFloat(row.Delta))
+			b.WriteString(" |\n")
+		}
+		b.WriteByte('\n')
 	}
-	b.WriteByte('\n')
 
-	errors := metricDeltaErrors(obs.MetricDeltas)
 	if len(errors) > 0 {
 		b.WriteString("### Accepted-Window Metric Scrape Errors\n\n")
 		b.WriteString("| Container | Error |\n")

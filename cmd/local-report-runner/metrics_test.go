@@ -13,7 +13,7 @@ import (
 
 func TestParsePrometheusMetricsKeepsSelectedSeries(t *testing.T) {
 	text := `
-# HELP cometbft_abci_connection_method_timing_seconds Timing for each ABCI method.
+	# HELP cometbft_abci_connection_method_timing_seconds Timing for each ABCI method.
 cometbft_abci_connection_method_timing_seconds_sum{chain_id="sgldb",method="commit",type="sync"} 1.25
 cometbft_abci_connection_method_timing_seconds_count{chain_id="sgldb",method="commit",type="sync"} 5
 cometbft_consensus_height{chain_id="sgldb"} 10
@@ -50,6 +50,31 @@ tx_count 7
 	}
 	if _, ok := metrics["some_unrelated_metric"]; ok {
 		t.Fatalf("unrelated metric was retained")
+	}
+}
+
+func TestParsePrometheusMetricsDropsNonFiniteSeries(t *testing.T) {
+	text := `
+go_gc_duration_seconds_sum NaN
+go_memstats_heap_alloc_bytes +Inf
+go_threads 8
+`
+	metrics := parsePrometheusMetrics(text)
+	if _, ok := metrics["go_gc_duration_seconds_sum"]; ok {
+		t.Fatalf("NaN metric was retained")
+	}
+	if _, ok := metrics["go_memstats_heap_alloc_bytes"]; ok {
+		t.Fatalf("Inf metric was retained")
+	}
+	if got := metrics["go_threads"]; got != 8 {
+		t.Fatalf("go_threads = %v, want 8", got)
+	}
+	payload, err := json.Marshal(loadWindowObservation{MetricsBefore: []metricSnapshot{{Name: "validator-0", Metrics: metrics}}})
+	if err != nil {
+		t.Fatalf("marshal metrics with finite-only values: %v", err)
+	}
+	if !strings.Contains(string(payload), `"go_threads":8`) {
+		t.Fatalf("payload missing finite metric: %s", payload)
 	}
 }
 
@@ -266,6 +291,32 @@ func TestMetricDeltaSnapshotsPreserveBeforeAfterDelta(t *testing.T) {
 	}
 }
 
+func TestMetricDeltaSnapshotsPreserveScrapeErrorsWithoutFabricatingDeltas(t *testing.T) {
+	before := []metricSnapshot{{
+		Name: "validator-0",
+		URL:  "http://127.0.0.1:26660/metrics",
+		Metrics: map[string]float64{
+			"treedb_vlog_write_seconds_sum": 10,
+		},
+	}}
+	after := []metricSnapshot{{
+		Name:  "validator-0",
+		URL:   "http://127.0.0.1:26660/metrics",
+		Error: "GET /metrics: connection refused",
+	}}
+
+	deltas := metricDeltaSnapshots(before, after)
+	if len(deltas) != 1 {
+		t.Fatalf("deltas len = %d, want 1", len(deltas))
+	}
+	if deltas[0].Error == "" {
+		t.Fatalf("expected scrape error to be preserved")
+	}
+	if len(deltas[0].Metrics) != 0 {
+		t.Fatalf("fabricated metrics after scrape error: %+v", deltas[0].Metrics)
+	}
+}
+
 func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T) {
 	artifact := reportArtifact{
 		GeneratedAt: time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC),
@@ -322,6 +373,41 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 		if !strings.Contains(md, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, md)
 		}
+	}
+}
+
+func TestRenderReportMarkdownIncludesMetricScrapeErrorsWithoutDeltas(t *testing.T) {
+	artifact := reportArtifact{
+		GeneratedAt: time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC),
+		Results: []runResult{{
+			Scenario: scenario{Name: "plain-send"},
+			LoadWindow: &loadWindowObservation{
+				Reached:                true,
+				DurationSatisfied:      true,
+				Seconds:                12.5,
+				IncludedTransactions:   100,
+				SuccessfulTransactions: 100,
+				TargetTransactions:     100,
+				MetricDeltas: []metricDeltaSnapshot{{
+					Name:  "validator-0",
+					Error: "after: GET /metrics: connection refused",
+				}},
+			},
+		}},
+	}
+
+	md := renderReportMarkdown(artifact)
+	for _, want := range []string{
+		"### Accepted-Window Metric Scrape Errors",
+		"validator-0",
+		"after: GET /metrics: connection refused",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "No accepted-window metric deltas were recorded.") {
+		t.Fatalf("markdown hid scrape errors as no-delta message:\n%s", md)
 	}
 }
 
