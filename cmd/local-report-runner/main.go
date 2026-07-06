@@ -960,7 +960,7 @@ func makePreseedConfig(profile string, accounts, activeWallets int) preseedConfi
 const (
 	simappCosmosDBVersion = "v0.0.0-20260701184343-6ddcb75557e5"
 	simappCosmosDBRef     = "6ddcb75557e59bc4e6668ac7699cd52b63b3e402"
-	simappGomapVersion    = "v0.6.2-0.20260706054834-aed1053d0f8f8"
+	simappGomapVersion    = "v0.6.2-0.20260706054834-aed1053d0f8f"
 	simappGomapRef        = "aed1053d0f8f8f5452098e45f89ff30971c9521f"
 	simappIAVLVersion     = "v0.0.0-20260701072929-12a26715119b"
 	simappIAVLRef         = "12a26715119bb3ea55289ffd7b256161effc7b8b"
