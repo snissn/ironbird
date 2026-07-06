@@ -14,6 +14,7 @@ RUN apk add --no-cache $PACKAGES
 ARG CHAIN_TAG
 ARG CHAIN_SRC=https://github.com/cosmos/cosmos-sdk
 ARG REPLACE_CMD
+ENV GOPRIVATE=github.com/snissn/* GONOSUMDB=github.com/snissn/*
 
 RUN git clone $CHAIN_SRC /src/app && \
     cd /src/app && \
