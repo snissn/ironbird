@@ -15,6 +15,8 @@ WALLETS="${WALLETS:-5000}"
 PRESEED_ACCOUNTS="${PRESEED_ACCOUNTS:-100000}"
 SKIP_BUILD="${SKIP_BUILD:-true}"
 TMPDIR="${TMPDIR:-/mnt/fast4tb/tmp}"
+WORKLOADS="${WORKLOADS:-}"
+BACKENDS="${BACKENDS:-}"
 
 mkdir -p "$OUT_ROOT" "$(dirname "$RUNNER")" "$TMPDIR"
 
@@ -35,6 +37,23 @@ json_bool() {
 
 json_num() {
   jq -r "$1 // 0" "$2"
+}
+
+selected() {
+  local allowlist="$1"
+  local value="$2"
+  if [[ -z "$allowlist" ]]; then
+    return 0
+  fi
+  local item
+  IFS=',' read -ra items <<<"$allowlist"
+  for item in "${items[@]}"; do
+    item="${item//[[:space:]]/}"
+    if [[ "$item" == "$value" ]]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 run_one() {
@@ -143,7 +162,13 @@ matrix=(
 failures=0
 for row in "${matrix[@]}"; do
   read -r workload blocks txs msg contained msgs_per_tx recipients max_gas <<<"$row"
+  if ! selected "$WORKLOADS" "$workload"; then
+    continue
+  fi
   for backend in goleveldb treedb; do
+    if ! selected "$BACKENDS" "$backend"; then
+      continue
+    fi
     if ! run_until_accepted "$workload" "$backend" "$blocks" "$txs" "$msg" "$contained" "$msgs_per_tx" "$recipients" "$max_gas"; then
       failures=$((failures + 1))
     fi
