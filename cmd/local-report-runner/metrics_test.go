@@ -265,8 +265,8 @@ func TestMetricDeltaSnapshotsPreserveBeforeAfterDelta(t *testing.T) {
 	if got := deltas[0].Metrics["process_cpu_seconds_total"]; got.Delta != 5.25 {
 		t.Fatalf("process CPU delta = %+v, want delta 5.25", got)
 	}
-	if got := deltas[0].Metrics["treedb_checkpoint_runs_total"]; got.Before != 0 || got.After != 2 || got.Delta != 2 {
-		t.Fatalf("new metric delta = %+v, want before 0 after 2 delta 2", got)
+	if _, ok := deltas[0].Metrics["treedb_checkpoint_runs_total"]; ok {
+		t.Fatalf("one-sided after metric fabricated as delta: %+v", deltas[0].Metrics["treedb_checkpoint_runs_total"])
 	}
 
 	payload, err := json.Marshal(loadWindowObservation{

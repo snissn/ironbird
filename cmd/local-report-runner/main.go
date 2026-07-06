@@ -43,6 +43,7 @@ const (
 	profileBoundaryAcceptedWindow     = "accepted-window"
 	profileBoundaryLoadWindowAdjacent = "load-window-adjacent"
 	profileBoundaryWholeRun           = "whole-run"
+	profileCommandTimeout             = 30 * time.Second
 )
 
 type scenario struct {
@@ -2232,7 +2233,9 @@ func collectAppPprofEndpointProfile(ctx context.Context, validator interface {
 		"-c",
 		fmt.Sprintf("wget -q -O %s %s", shellQuote(remotePath), shellQuote(endpointURL)),
 	}
-	stdout, stderr, code, err := validator.RunCommand(ctx, cmd)
+	profileCtx, cancel := context.WithTimeout(ctx, profileCommandTimeout)
+	stdout, stderr, code, err := validator.RunCommand(profileCtx, cmd)
+	cancel()
 	if err != nil {
 		artifact.Error = fmt.Sprintf("fetch %s profile: %v stdout=%q stderr=%q", req.Kind, err, trimLog(stdout, 2000), trimLog(stderr, 2000))
 		return artifact
@@ -2288,7 +2291,9 @@ func attachPprofTopSummaries(ctx context.Context, artifacts []profileArtifact) [
 			continue
 		}
 		summaryPath := artifacts[i].Path + ".top.txt"
-		out, err := exec.CommandContext(ctx, "go", "tool", "pprof", "-top", artifacts[i].Path).CombinedOutput()
+		summaryCtx, cancel := context.WithTimeout(ctx, profileCommandTimeout)
+		out, err := exec.CommandContext(summaryCtx, "go", "tool", "pprof", "-top", artifacts[i].Path).CombinedOutput()
+		cancel()
 		if err != nil {
 			artifacts[i].TopSummaryError = fmt.Sprintf("go tool pprof -top: %v output=%q", err, trimLog(string(out), 2000))
 			continue
@@ -2908,12 +2913,10 @@ func metricDeltaSnapshots(before, after []metricSnapshot) []metricDeltaSnapshot 
 		if metricSnapshotsComparable(beforeSnap, afterSnap) && len(metricKeys) > 0 {
 			delta.Metrics = make(map[string]metricDeltaValue, len(metricKeys))
 			for key := range metricKeys {
-				var beforeValue, afterValue float64
-				if beforeSnap != nil {
-					beforeValue = beforeSnap.Metrics[key]
-				}
-				if afterSnap != nil {
-					afterValue = afterSnap.Metrics[key]
+				beforeValue, beforeOK := beforeSnap.Metrics[key]
+				afterValue, afterOK := afterSnap.Metrics[key]
+				if !beforeOK || !afterOK {
+					continue
 				}
 				delta.Metrics[key] = metricDeltaValue{
 					Before: beforeValue,
