@@ -540,7 +540,7 @@ func main() {
 		commitBenchBlocks           = flag.Uint64("commit-benchmark-blocks", 0, "when >0, skip Catalyst and measure empty/light-block ABCI commit cost for this many blocks")
 		appCPUProfileDir            = flag.String("app-cpuprofile-dir", "", "when set, pass --cpu-profile to app validators and copy validator 0 CPU profiles into this directory")
 		appHeapProfileDir           = flag.String("app-heapprofile-dir", "", "when set, enable validator pprof and copy validator 0 heap profiles into this directory")
-		appPprofProfileDir          = flag.String("app-pprof-profile-dir", "", "when set, enable validator pprof and copy validator 0 heap, allocs, block, mutex, and goroutine profiles into this directory")
+		appPprofProfileDir          = flag.String("app-pprof-profile-dir", "", "when set, enable validator pprof and copy validator 0 heap, allocs, and goroutine profiles into this directory")
 		rawTxAudit                  = flag.Bool("raw-tx-audit", true, "when true, verify non-EVM tx inclusion with post-load CometBFT /tx queries; disable for clean app CPU profiles")
 		loadWindowDrainTimeout      = flag.Duration("load-window-drain-timeout", 0, "optional extra time to keep the chain running after Catalyst exits so app metrics can reach the load-window target")
 		loadWindowMinDuration       = flag.Duration("load-window-min-duration", 0, "minimum app-metric load-window duration required for final throughput evidence; short reached windows are annotated invalid")
