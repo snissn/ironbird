@@ -39,6 +39,12 @@ import (
 
 const defaultMnemonic = "copper push brief egg scan entry inform record adjust fossil boss egg comic alien upon aspect dry avoid interest fury window hint race symptom"
 
+const (
+	profileBoundaryAcceptedWindow     = "accepted-window"
+	profileBoundaryLoadWindowAdjacent = "load-window-adjacent"
+	profileBoundaryWholeRun           = "whole-run"
+)
+
 type scenario struct {
 	Name              string                 `json:"name"`
 	Runner            string                 `json:"runner,omitempty"`
@@ -171,6 +177,19 @@ type metricSnapshot struct {
 	Error   string             `json:"error,omitempty"`
 }
 
+type metricDeltaSnapshot struct {
+	Name    string                      `json:"name"`
+	URL     string                      `json:"url,omitempty"`
+	Metrics map[string]metricDeltaValue `json:"metrics,omitempty"`
+	Error   string                      `json:"error,omitempty"`
+}
+
+type metricDeltaValue struct {
+	Before float64 `json:"before"`
+	After  float64 `json:"after"`
+	Delta  float64 `json:"delta"`
+}
+
 type dataPathSize struct {
 	Name  string `json:"name"`
 	Path  string `json:"path"`
@@ -219,19 +238,21 @@ type storageSignal struct {
 }
 
 type loadWindowObservation struct {
-	TargetTransactions     int              `json:"target_transactions,omitempty"`
-	MinimumSeconds         float64          `json:"minimum_seconds,omitempty"`
-	DurationSatisfied      bool             `json:"duration_satisfied"`
-	Reached                bool             `json:"reached,omitempty"`
-	StartedAt              time.Time        `json:"started_at,omitempty"`
-	EndedAt                time.Time        `json:"ended_at,omitempty"`
-	Seconds                float64          `json:"seconds,omitempty"`
-	IncludedTransactions   int              `json:"included_transactions,omitempty"`
-	SuccessfulTransactions int              `json:"successful_transactions,omitempty"`
-	AppMetricCandidates    []string         `json:"app_metric_candidates,omitempty"`
-	MetricsAfter           []metricSnapshot `json:"metrics_after,omitempty"`
-	StorageSignals         []storageSignal  `json:"storage_signal_summary,omitempty"`
-	Error                  string           `json:"error,omitempty"`
+	TargetTransactions     int                   `json:"target_transactions,omitempty"`
+	MinimumSeconds         float64               `json:"minimum_seconds,omitempty"`
+	DurationSatisfied      bool                  `json:"duration_satisfied"`
+	Reached                bool                  `json:"reached,omitempty"`
+	StartedAt              time.Time             `json:"started_at,omitempty"`
+	EndedAt                time.Time             `json:"ended_at,omitempty"`
+	Seconds                float64               `json:"seconds,omitempty"`
+	IncludedTransactions   int                   `json:"included_transactions,omitempty"`
+	SuccessfulTransactions int                   `json:"successful_transactions,omitempty"`
+	AppMetricCandidates    []string              `json:"app_metric_candidates,omitempty"`
+	MetricsBefore          []metricSnapshot      `json:"metrics_before,omitempty"`
+	MetricsAfter           []metricSnapshot      `json:"metrics_after,omitempty"`
+	MetricDeltas           []metricDeltaSnapshot `json:"metric_deltas,omitempty"`
+	StorageSignals         []storageSignal       `json:"storage_signal_summary,omitempty"`
+	Error                  string                `json:"error,omitempty"`
 }
 
 type moduleTiming struct {
@@ -313,10 +334,13 @@ type commitBenchmark struct {
 }
 
 type profileArtifact struct {
-	Name  string `json:"name"`
-	Kind  string `json:"kind"`
-	Path  string `json:"path,omitempty"`
-	Error string `json:"error,omitempty"`
+	Name            string `json:"name"`
+	Kind            string `json:"kind"`
+	Boundary        string `json:"timing_boundary,omitempty"`
+	Path            string `json:"path,omitempty"`
+	TopSummaryPath  string `json:"top_summary_path,omitempty"`
+	TopSummaryError string `json:"top_summary_error,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 type derivedMetrics struct {
@@ -510,11 +534,13 @@ func main() {
 	var (
 		scenarioFlag                = flag.String("scenario", "all", "scenario to run: all, all-with-celestia, evm-blog, simapp-goleveldb, simapp-treedb, simapp-goleveldb-all, simapp-treedb-all, celestia-sync-ab")
 		outPath                     = flag.String("out", "", "JSON artifact path")
+		markdownPath                = flag.String("markdown-out", "", "Markdown summary artifact path; defaults to the JSON artifact path with .md extension")
 		keepTestnets                = flag.Bool("keep-testnets", false, "leave docker testnets running instead of tearing them down")
 		skipBuild                   = flag.Bool("skip-build", false, "skip docker image builds and reuse existing tags")
 		commitBenchBlocks           = flag.Uint64("commit-benchmark-blocks", 0, "when >0, skip Catalyst and measure empty/light-block ABCI commit cost for this many blocks")
 		appCPUProfileDir            = flag.String("app-cpuprofile-dir", "", "when set, pass --cpu-profile to app validators and copy validator 0 CPU profiles into this directory")
 		appHeapProfileDir           = flag.String("app-heapprofile-dir", "", "when set, enable validator pprof and copy validator 0 heap profiles into this directory")
+		appPprofProfileDir          = flag.String("app-pprof-profile-dir", "", "when set, enable validator pprof and copy validator 0 heap, allocs, block, mutex, and goroutine profiles into this directory")
 		rawTxAudit                  = flag.Bool("raw-tx-audit", true, "when true, verify non-EVM tx inclusion with post-load CometBFT /tx queries; disable for clean app CPU profiles")
 		loadWindowDrainTimeout      = flag.Duration("load-window-drain-timeout", 0, "optional extra time to keep the chain running after Catalyst exits so app metrics can reach the load-window target")
 		loadWindowMinDuration       = flag.Duration("load-window-min-duration", 0, "minimum app-metric load-window duration required for final throughput evidence; short reached windows are annotated invalid")
@@ -655,14 +681,14 @@ func main() {
 		if *appCPUProfileDir != "" {
 			sc = withAppCPUProfile(sc)
 		}
-		if *appHeapProfileDir != "" {
+		if *appHeapProfileDir != "" || *appPprofProfileDir != "" {
 			sc = withAppHeapProfile(sc)
 		}
 		var result runResult
 		if sc.Runner == "celestia-sync-ab" {
 			result = runCelestiaSyncScenario(ctx, sc)
 		} else {
-			result = runScenario(ctx, workerConfig, sc, *skipBuild, *keepTestnets, *commitBenchBlocks, *appCPUProfileDir, *appHeapProfileDir, *rawTxAudit, *loadWindowDrainTimeout, *loadWindowMinDuration, *loadWindowTargetFraction, *stopCatalystAfterLoadWindow)
+			result = runScenario(ctx, workerConfig, sc, *skipBuild, *keepTestnets, *commitBenchBlocks, *appCPUProfileDir, *appHeapProfileDir, *appPprofProfileDir, *rawTxAudit, *loadWindowDrainTimeout, *loadWindowMinDuration, *loadWindowTargetFraction, *stopCatalystAfterLoadWindow)
 		}
 		artifact.Results = append(artifact.Results, result)
 		if result.Error != "" {
@@ -684,6 +710,16 @@ func main() {
 		fatalf("write artifact: %v", err)
 	}
 	fmt.Printf("wrote %s\n", *outPath)
+	if *markdownPath == "" {
+		*markdownPath = markdownPathForJSON(*outPath)
+	}
+	if err := os.MkdirAll(filepath.Dir(*markdownPath), 0o755); err != nil {
+		fatalf("create markdown artifact dir: %v", err)
+	}
+	if err := os.WriteFile(*markdownPath, []byte(renderReportMarkdown(artifact)), 0o644); err != nil {
+		fatalf("write markdown artifact: %v", err)
+	}
+	fmt.Printf("wrote %s\n", *markdownPath)
 }
 
 func startRuntimeProfiles(cpuPath, heapPath, blockPath, mutexPath string) func() {
@@ -1100,7 +1136,7 @@ func launchGenesisAccounts(sc scenario) int {
 	return sc.NumWallets
 }
 
-func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appCPUProfileDir, appHeapProfileDir string, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration, loadWindowTargetFraction float64, stopCatalystAfterLoadWindow bool) (result runResult) {
+func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appCPUProfileDir, appHeapProfileDir, appPprofProfileDir string, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration, loadWindowTargetFraction float64, stopCatalystAfterLoadWindow bool) (result runResult) {
 	result.Scenario = sc
 	result.StartedAt = time.Now()
 	result.ProviderName = fmt.Sprintf("ib%s%s", shortChainName(sc.Name), strings.ToLower(coreutil.RandomString(4)))
@@ -1242,7 +1278,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 		result.StorageSignals = summarizeStorageSignals(result.MetricsBefore, result.MetricsAfter, result.DataSizesBefore, result.DataSizesAfter)
 		result.CommitBenchmark = bench
 		endPhase = startPhase(&result, "collect_app_cpu_profile", "")
-		result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfiles(ctx, launchResp.ProviderState, launchResp.ChainState, sc, appCPUProfileDir, appHeapProfileDir)...)
+		result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfiles(ctx, launchResp.ProviderState, launchResp.ChainState, sc, appCPUProfileDir, appHeapProfileDir, appPprofProfileDir)...)
 		endPhase()
 		if benchErr != nil {
 			result.Error = fmt.Sprintf("run commit benchmark: %v", benchErr)
@@ -1320,7 +1356,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	}
 	result.CorrectedLoadTest = summarizeCorrectedLoadTest(result)
 	endPhase = startPhase(&result, "collect_app_cpu_profile", "")
-	result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfiles(ctx, launchResp.ProviderState, launchResp.ChainState, sc, appCPUProfileDir, appHeapProfileDir)...)
+	result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfiles(ctx, launchResp.ProviderState, launchResp.ChainState, sc, appCPUProfileDir, appHeapProfileDir, appPprofProfileDir)...)
 	endPhase()
 	result.Derived = deriveMetrics(sc, result)
 	if len(loadResp.ProviderState) != 0 {
@@ -1864,6 +1900,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 			DurationSatisfied:  minDuration <= 0,
 			StartedAt:          started,
 			EndedAt:            time.Now(),
+			MetricsBefore:      cloneMetricSnapshots(baseline),
 			Error:              "target transaction count is not positive",
 		}
 		done <- obs
@@ -1879,7 +1916,10 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 		defer ticker.Stop()
 		last := loadWindowObservation{
 			TargetTransactions: targetTransactions,
+			MinimumSeconds:     minDuration.Seconds(),
+			DurationSatisfied:  minDuration <= 0,
 			StartedAt:          started,
+			MetricsBefore:      cloneMetricSnapshots(baseline),
 		}
 		observe := func() loadWindowObservation {
 			metrics := scrapeMetrics(monitorCtx, providerName)
@@ -1896,7 +1936,9 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 				IncludedTransactions:   included,
 				SuccessfulTransactions: successful,
 				AppMetricCandidates:    candidates,
+				MetricsBefore:          cloneMetricSnapshots(baseline),
 				MetricsAfter:           metrics,
+				MetricDeltas:           metricDeltaSnapshots(baseline, metrics),
 				StorageSignals:         signals,
 			}
 			if ok && successful >= targetTransactions {
@@ -1929,16 +1971,30 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 	return monitor
 }
 
-func collectAppProfiles(ctx context.Context, providerState, chainState []byte, sc scenario, cpuOutDir, heapOutDir string) []profileArtifact {
-	if (cpuOutDir == "" || sc.AppCPUProfile == "") && (heapOutDir == "" || sc.AppHeapProfile == "") {
+type appProfileRequest struct {
+	Kind     string
+	Endpoint string
+	FileName string
+	OutDir   string
+	Boundary string
+}
+
+func (req appProfileRequest) artifact(scenarioName string) profileArtifact {
+	return profileArtifact{
+		Name:     scenarioName,
+		Kind:     req.Kind,
+		Boundary: req.Boundary,
+	}
+}
+
+func collectAppProfiles(ctx context.Context, providerState, chainState []byte, sc scenario, cpuOutDir, heapOutDir, pprofOutDir string) []profileArtifact {
+	requests := appProfileRequests(sc, cpuOutDir, heapOutDir, pprofOutDir)
+	if len(requests) == 0 {
 		return nil
 	}
-	var artifacts []profileArtifact
-	if heapOutDir != "" && sc.AppHeapProfile != "" {
-		artifacts = append(artifacts, profileArtifact{Name: sc.Name, Kind: "validator_heap"})
-	}
-	if cpuOutDir != "" && sc.AppCPUProfile != "" {
-		artifacts = append(artifacts, profileArtifact{Name: sc.Name, Kind: "validator_cpu"})
+	artifacts := make([]profileArtifact, 0, len(requests))
+	for _, req := range requests {
+		artifacts = append(artifacts, req.artifact(sc.Name))
 	}
 	logger, _ := zap.NewDevelopment()
 	decompressedProviderState, err := util.DecompressData(providerState)
@@ -1966,19 +2022,67 @@ func collectAppProfiles(ctx context.Context, providerState, chainState []byte, s
 		return failProfileArtifacts(artifacts, "no validators")
 	}
 
-	if heapOutDir != "" && sc.AppHeapProfile != "" {
-		artifacts[0] = collectAppHeapProfile(ctx, validators[0], sc, heapOutDir)
-	}
-
-	if cpuOutDir != "" && sc.AppCPUProfile != "" {
-		cpuArtifact := collectAppCPUProfile(ctx, validators[0], sc, cpuOutDir)
-		if heapOutDir != "" && sc.AppHeapProfile != "" {
-			artifacts = append(artifacts[:1], cpuArtifact)
-		} else {
-			artifacts[0] = cpuArtifact
+	for i, req := range requests {
+		switch req.Kind {
+		case "validator_cpu":
+			artifacts[i] = collectAppCPUProfile(ctx, validators[0], sc, req)
+		default:
+			artifacts[i] = collectAppPprofEndpointProfile(ctx, validators[0], sc, req)
 		}
 	}
-	return artifacts
+	return attachPprofTopSummaries(ctx, artifacts)
+}
+
+func appProfileRequests(sc scenario, cpuOutDir, heapOutDir, pprofOutDir string) []appProfileRequest {
+	var requests []appProfileRequest
+	if heapOutDir != "" && sc.AppHeapProfile != "" {
+		requests = append(requests, appProfileRequest{
+			Kind:     "validator_heap",
+			Endpoint: "heap?gc=1",
+			FileName: sc.AppHeapProfile,
+			OutDir:   heapOutDir,
+			Boundary: profileBoundaryLoadWindowAdjacent,
+		})
+	}
+	if pprofOutDir != "" && sc.AppPprofListen != "" {
+		for _, profile := range []struct {
+			kind     string
+			endpoint string
+			suffix   string
+			boundary string
+		}{
+			{kind: "validator_heap", endpoint: "heap?gc=1", suffix: "heap", boundary: profileBoundaryLoadWindowAdjacent},
+			{kind: "validator_allocs", endpoint: "allocs", suffix: "allocs", boundary: profileBoundaryWholeRun},
+			{kind: "validator_block", endpoint: "block", suffix: "block", boundary: profileBoundaryWholeRun},
+			{kind: "validator_mutex", endpoint: "mutex", suffix: "mutex", boundary: profileBoundaryWholeRun},
+			{kind: "validator_goroutine", endpoint: "goroutine", suffix: "goroutine", boundary: profileBoundaryLoadWindowAdjacent},
+		} {
+			fileName := appPprofFileName(sc, profile.suffix)
+			if profile.kind == "validator_heap" && heapOutDir == pprofOutDir && fileName == sc.AppHeapProfile {
+				continue
+			}
+			requests = append(requests, appProfileRequest{
+				Kind:     profile.kind,
+				Endpoint: profile.endpoint,
+				FileName: fileName,
+				OutDir:   pprofOutDir,
+				Boundary: profile.boundary,
+			})
+		}
+	}
+	if cpuOutDir != "" && sc.AppCPUProfile != "" {
+		requests = append(requests, appProfileRequest{
+			Kind:     "validator_cpu",
+			FileName: sc.AppCPUProfile,
+			OutDir:   cpuOutDir,
+			Boundary: profileBoundaryWholeRun,
+		})
+	}
+	return requests
+}
+
+func appPprofFileName(sc scenario, suffix string) string {
+	return fmt.Sprintf("%s-validator-0-%s.pprof", sanitize(sc.Name), suffix)
 }
 
 type validatorConfigReader interface {
@@ -2091,38 +2195,39 @@ func failProfileArtifacts(artifacts []profileArtifact, message string) []profile
 	return artifacts
 }
 
-func collectAppHeapProfile(ctx context.Context, validator interface {
+func collectAppPprofEndpointProfile(ctx context.Context, validator interface {
 	RunCommand(context.Context, []string) (string, string, int, error)
 	ReadFile(context.Context, string) ([]byte, error)
-}, sc scenario, outDir string) profileArtifact {
-	artifact := profileArtifact{Name: sc.Name, Kind: "validator_heap"}
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+}, sc scenario, req appProfileRequest) profileArtifact {
+	artifact := req.artifact(sc.Name)
+	if err := os.MkdirAll(req.OutDir, 0o755); err != nil {
 		artifact.Error = fmt.Sprintf("create profile dir: %v", err)
 		return artifact
 	}
-	remotePath := filepath.Join("/simd", sc.AppHeapProfile)
+	remotePath := filepath.Join("/simd", req.FileName)
+	endpointURL := "http://127.0.0.1:6060/debug/pprof/" + req.Endpoint
 	cmd := []string{
 		"sh",
 		"-c",
-		fmt.Sprintf("wget -q -O %s http://127.0.0.1:6060/debug/pprof/heap?gc=1", shellQuote(remotePath)),
+		fmt.Sprintf("wget -q -O %s %s", shellQuote(remotePath), shellQuote(endpointURL)),
 	}
 	stdout, stderr, code, err := validator.RunCommand(ctx, cmd)
 	if err != nil {
-		artifact.Error = fmt.Sprintf("fetch heap profile: %v stdout=%q stderr=%q", err, trimLog(stdout, 2000), trimLog(stderr, 2000))
+		artifact.Error = fmt.Sprintf("fetch %s profile: %v stdout=%q stderr=%q", req.Kind, err, trimLog(stdout, 2000), trimLog(stderr, 2000))
 		return artifact
 	}
 	if code != 0 {
-		artifact.Error = fmt.Sprintf("fetch heap profile exit %d stdout=%q stderr=%q", code, trimLog(stdout, 2000), trimLog(stderr, 2000))
+		artifact.Error = fmt.Sprintf("fetch %s profile exit %d stdout=%q stderr=%q", req.Kind, code, trimLog(stdout, 2000), trimLog(stderr, 2000))
 		return artifact
 	}
-	body, err := validator.ReadFile(ctx, sc.AppHeapProfile)
+	body, err := validator.ReadFile(ctx, req.FileName)
 	if err != nil {
-		artifact.Error = fmt.Sprintf("read validator heap profile: %v", err)
+		artifact.Error = fmt.Sprintf("read %s profile: %v", req.Kind, err)
 		return artifact
 	}
-	localPath := filepath.Join(outDir, sc.AppHeapProfile)
+	localPath := filepath.Join(req.OutDir, req.FileName)
 	if err := os.WriteFile(localPath, body, 0o644); err != nil {
-		artifact.Error = fmt.Sprintf("write validator heap profile: %v", err)
+		artifact.Error = fmt.Sprintf("write %s profile: %v", req.Kind, err)
 		return artifact
 	}
 	artifact.Path = localPath
@@ -2132,9 +2237,9 @@ func collectAppHeapProfile(ctx context.Context, validator interface {
 func collectAppCPUProfile(ctx context.Context, validator interface {
 	Stop(context.Context) error
 	ReadFile(context.Context, string) ([]byte, error)
-}, sc scenario, outDir string) profileArtifact {
-	artifact := profileArtifact{Name: sc.Name, Kind: "validator_cpu"}
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+}, sc scenario, req appProfileRequest) profileArtifact {
+	artifact := req.artifact(sc.Name)
+	if err := os.MkdirAll(req.OutDir, 0o755); err != nil {
 		artifact.Error = fmt.Sprintf("create profile dir: %v", err)
 		return artifact
 	}
@@ -2142,18 +2247,38 @@ func collectAppCPUProfile(ctx context.Context, validator interface {
 		artifact.Error = fmt.Sprintf("stop validator: %v", err)
 		return artifact
 	}
-	body, err := validator.ReadFile(ctx, sc.AppCPUProfile)
+	body, err := validator.ReadFile(ctx, req.FileName)
 	if err != nil {
 		artifact.Error = fmt.Sprintf("read validator profile: %v", err)
 		return artifact
 	}
-	localPath := filepath.Join(outDir, sc.AppCPUProfile)
+	localPath := filepath.Join(req.OutDir, req.FileName)
 	if err := os.WriteFile(localPath, body, 0o644); err != nil {
 		artifact.Error = fmt.Sprintf("write validator profile: %v", err)
 		return artifact
 	}
 	artifact.Path = localPath
 	return artifact
+}
+
+func attachPprofTopSummaries(ctx context.Context, artifacts []profileArtifact) []profileArtifact {
+	for i := range artifacts {
+		if artifacts[i].Path == "" || artifacts[i].Error != "" {
+			continue
+		}
+		summaryPath := artifacts[i].Path + ".top.txt"
+		out, err := exec.CommandContext(ctx, "go", "tool", "pprof", "-top", artifacts[i].Path).CombinedOutput()
+		if err != nil {
+			artifacts[i].TopSummaryError = fmt.Sprintf("go tool pprof -top: %v output=%q", err, trimLog(string(out), 2000))
+			continue
+		}
+		if err := os.WriteFile(summaryPath, out, 0o644); err != nil {
+			artifacts[i].TopSummaryError = fmt.Sprintf("write pprof top summary: %v", err)
+			continue
+		}
+		artifacts[i].TopSummaryPath = summaryPath
+	}
+	return artifacts
 }
 
 func runCommitBenchmark(ctx context.Context, providerState, chainState []byte, sc scenario, blocks uint64) (*commitBenchmark, error) {
@@ -2512,23 +2637,36 @@ func prometheusMetricName(expr string) string {
 }
 
 func interestingMetric(name string) bool {
-	switch name {
-	case "cometbft_abci_connection_method_timing_seconds_sum",
-		"cometbft_abci_connection_method_timing_seconds_count",
-		"cometbft_state_block_processing_time_sum",
-		"cometbft_state_block_processing_time_count",
-		"cometbft_consensus_block_interval_seconds_sum",
-		"cometbft_consensus_block_interval_seconds_count",
-		"cometbft_consensus_total_txs",
-		"cometbft_mempool_successful_txs",
-		"tx_count",
-		"tx_successful",
-		"tx_gas_used",
-		"process_cpu_seconds_total",
-		"process_resident_memory_bytes":
-		return true
+	if name == "" {
+		return false
 	}
-	return strings.HasPrefix(name, "begin_blocker_") || strings.HasPrefix(name, "end_blocker_")
+	for _, prefix := range []string{
+		"treedb_",
+		"tree_db_",
+		"cometbft_",
+		"tendermint_",
+		"process_",
+		"go_",
+		"runtime_",
+		"mempool_",
+		"consensus_",
+		"abci_",
+		"blockstore_",
+		"block_store_",
+		"tx_index_",
+		"indexer_",
+		"sdk_",
+		"cosmos_",
+		"app_",
+		"tx_",
+		"begin_blocker_",
+		"end_blocker_",
+	} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func collectDataSizes(ctx context.Context, providerName string, sc scenario) []dataPathSize {
@@ -2677,6 +2815,108 @@ func summarizeModuleTimings(deltas map[string]float64) []moduleTiming {
 		return out[i].Seconds > out[j].Seconds
 	})
 	return out
+}
+
+func cloneMetricSnapshots(snapshots []metricSnapshot) []metricSnapshot {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	out := make([]metricSnapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		copied := metricSnapshot{
+			Name:  snapshot.Name,
+			URL:   snapshot.URL,
+			Error: snapshot.Error,
+		}
+		if len(snapshot.Metrics) > 0 {
+			copied.Metrics = make(map[string]float64, len(snapshot.Metrics))
+			for key, value := range snapshot.Metrics {
+				copied.Metrics[key] = value
+			}
+		}
+		out = append(out, copied)
+	}
+	return out
+}
+
+func metricDeltaSnapshots(before, after []metricSnapshot) []metricDeltaSnapshot {
+	beforeByName := metricSnapshotsByName(before)
+	afterByName := metricSnapshotsByName(after)
+	nameSet := map[string]struct{}{}
+	for _, snapshot := range before {
+		nameSet[snapshot.Name] = struct{}{}
+	}
+	for _, snapshot := range after {
+		nameSet[snapshot.Name] = struct{}{}
+	}
+	names := make([]string, 0, len(nameSet))
+	for name := range nameSet {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]metricDeltaSnapshot, 0, len(names))
+	for _, name := range names {
+		beforeSnap := beforeByName[name]
+		afterSnap := afterByName[name]
+		delta := metricDeltaSnapshot{Name: name}
+		if beforeSnap != nil {
+			delta.URL = beforeSnap.URL
+			delta.Error = appendSnapshotError(delta.Error, "before", beforeSnap.Error)
+		}
+		if afterSnap != nil {
+			if delta.URL == "" {
+				delta.URL = afterSnap.URL
+			}
+			delta.Error = appendSnapshotError(delta.Error, "after", afterSnap.Error)
+		}
+		metricKeys := map[string]struct{}{}
+		if beforeSnap != nil {
+			for key := range beforeSnap.Metrics {
+				metricKeys[key] = struct{}{}
+			}
+		}
+		if afterSnap != nil {
+			for key := range afterSnap.Metrics {
+				metricKeys[key] = struct{}{}
+			}
+		}
+		if len(metricKeys) > 0 {
+			delta.Metrics = make(map[string]metricDeltaValue, len(metricKeys))
+			for key := range metricKeys {
+				var beforeValue, afterValue float64
+				if beforeSnap != nil {
+					beforeValue = beforeSnap.Metrics[key]
+				}
+				if afterSnap != nil {
+					afterValue = afterSnap.Metrics[key]
+				}
+				delta.Metrics[key] = metricDeltaValue{
+					Before: beforeValue,
+					After:  afterValue,
+					Delta:  afterValue - beforeValue,
+				}
+			}
+		}
+		if len(delta.Metrics) > 0 || delta.Error != "" {
+			out = append(out, delta)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func appendSnapshotError(current, phase, errText string) string {
+	if errText == "" {
+		return current
+	}
+	addition := phase + ": " + errText
+	if current == "" {
+		return addition
+	}
+	return current + "; " + addition
 }
 
 func metricSnapshotsByName(snapshots []metricSnapshot) map[string]*metricSnapshot {
@@ -3474,6 +3714,267 @@ func int64FromAny(v interface{}) int64 {
 	default:
 		return 0
 	}
+}
+
+func markdownPathForJSON(path string) string {
+	ext := filepath.Ext(path)
+	if ext == "" {
+		return path + ".md"
+	}
+	return strings.TrimSuffix(path, ext) + ".md"
+}
+
+func renderReportMarkdown(artifact reportArtifact) string {
+	var b strings.Builder
+	b.WriteString("# Ironbird Local Report\n\n")
+	if !artifact.GeneratedAt.IsZero() {
+		b.WriteString("- Generated: ")
+		b.WriteString(artifact.GeneratedAt.UTC().Format(time.RFC3339))
+		b.WriteByte('\n')
+	}
+	if branch := artifact.Git["branch"]; branch != "" {
+		b.WriteString("- Branch: `")
+		b.WriteString(mdCell(branch))
+		b.WriteString("`\n")
+	}
+	if head := artifact.Git["head"]; head != "" {
+		b.WriteString("- Head: `")
+		b.WriteString(mdCell(head))
+		b.WriteString("`\n")
+	}
+	b.WriteByte('\n')
+
+	b.WriteString("## Scenario Summary\n\n")
+	b.WriteString("| Scenario | Error | Load window | Included | Successful | Load-window TPS | Profiles |\n")
+	b.WriteString("| --- | --- | ---: | ---: | ---: | ---: | ---: |\n")
+	for _, result := range artifact.Results {
+		included, successful, _, _ := loadCounts(result)
+		loadWindow := ""
+		loadTPS := ""
+		if result.LoadWindow != nil {
+			loadWindow = fmt.Sprintf("%.3fs", result.LoadWindow.Seconds)
+			if result.Derived.LoadWindowIncludedTPS > 0 {
+				loadTPS = metricFloat(result.Derived.LoadWindowIncludedTPS)
+			}
+		}
+		b.WriteString("| ")
+		b.WriteString(mdCell(result.Scenario.Name))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(result.Error))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(loadWindow))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(included))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(successful))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(loadTPS))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(len(result.ProfileArtifacts)))
+		b.WriteString(" |\n")
+	}
+	b.WriteByte('\n')
+
+	for _, result := range artifact.Results {
+		writeRuntimeBreakdownMarkdown(&b, result)
+		writeAcceptedWindowMarkdown(&b, result)
+		writeProfileArtifactsMarkdown(&b, result)
+	}
+	return b.String()
+}
+
+func writeRuntimeBreakdownMarkdown(b *strings.Builder, result runResult) {
+	if len(result.RuntimeBreakdown) == 0 {
+		return
+	}
+	b.WriteString("## ")
+	b.WriteString(mdCell(result.Scenario.Name))
+	b.WriteString(" Runtime Breakdown\n\n")
+	b.WriteString("| Node | Workload s | ABCI s | Commit s | Finalize s | Non-ABCI s | Non-ABCI % |\n")
+	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+	for _, row := range result.RuntimeBreakdown {
+		b.WriteString("| ")
+		b.WriteString(mdCell(row.Name))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.WorkloadRuntimeSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ABCIObservedSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ABCICommitSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ABCIFinalizeBlockSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.NonABCIWorkloadSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.NonABCIPctOfWorkload))
+		b.WriteString(" |\n")
+	}
+	b.WriteByte('\n')
+}
+
+func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
+	if result.LoadWindow == nil {
+		return
+	}
+	obs := result.LoadWindow
+	b.WriteString("## ")
+	b.WriteString(mdCell(result.Scenario.Name))
+	b.WriteString(" Accepted Window\n\n")
+	b.WriteString("| Boundary | Reached | Duration ok | Seconds | Included | Successful | Target |\n")
+	b.WriteString("| --- | --- | --- | ---: | ---: | ---: | ---: |\n")
+	b.WriteString("| ")
+	b.WriteString(profileBoundaryAcceptedWindow)
+	b.WriteString(" | ")
+	b.WriteString(strconv.FormatBool(obs.Reached))
+	b.WriteString(" | ")
+	b.WriteString(strconv.FormatBool(obs.DurationSatisfied))
+	b.WriteString(" | ")
+	b.WriteString(metricFloat(obs.Seconds))
+	b.WriteString(" | ")
+	b.WriteString(strconv.Itoa(obs.IncludedTransactions))
+	b.WriteString(" | ")
+	b.WriteString(strconv.Itoa(obs.SuccessfulTransactions))
+	b.WriteString(" | ")
+	b.WriteString(strconv.Itoa(obs.TargetTransactions))
+	b.WriteString(" |\n\n")
+	if obs.Error != "" {
+		b.WriteString("- Window note: ")
+		b.WriteString(mdCell(obs.Error))
+		b.WriteString("\n\n")
+	}
+
+	rows := metricDeltaRows(obs.MetricDeltas)
+	if len(rows) == 0 {
+		b.WriteString("No accepted-window metric deltas were recorded.\n\n")
+		return
+	}
+	b.WriteString("### Accepted-Window Metric Deltas\n\n")
+	b.WriteString("| Container | Metric | Before | After | Delta |\n")
+	b.WriteString("| --- | --- | ---: | ---: | ---: |\n")
+	for _, row := range rows {
+		b.WriteString("| ")
+		b.WriteString(mdCell(row.Container))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(row.Metric))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.Before))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.After))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.Delta))
+		b.WriteString(" |\n")
+	}
+	b.WriteByte('\n')
+
+	errors := metricDeltaErrors(obs.MetricDeltas)
+	if len(errors) > 0 {
+		b.WriteString("### Accepted-Window Metric Scrape Errors\n\n")
+		b.WriteString("| Container | Error |\n")
+		b.WriteString("| --- | --- |\n")
+		for _, errRow := range errors {
+			b.WriteString("| ")
+			b.WriteString(mdCell(errRow.Container))
+			b.WriteString(" | ")
+			b.WriteString(mdCell(errRow.Error))
+			b.WriteString(" |\n")
+		}
+		b.WriteByte('\n')
+	}
+}
+
+func writeProfileArtifactsMarkdown(b *strings.Builder, result runResult) {
+	if len(result.ProfileArtifacts) == 0 {
+		return
+	}
+	b.WriteString("## ")
+	b.WriteString(mdCell(result.Scenario.Name))
+	b.WriteString(" Profile Manifest\n\n")
+	b.WriteString("| Kind | Timing boundary | Profile path | Top summary | Status |\n")
+	b.WriteString("| --- | --- | --- | --- | --- |\n")
+	for _, artifact := range result.ProfileArtifacts {
+		status := "ok"
+		if artifact.Error != "" {
+			status = artifact.Error
+		} else if artifact.TopSummaryError != "" {
+			status = artifact.TopSummaryError
+		}
+		b.WriteString("| ")
+		b.WriteString(mdCell(artifact.Kind))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(artifact.Boundary))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(artifact.Path))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(artifact.TopSummaryPath))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(status))
+		b.WriteString(" |\n")
+	}
+	b.WriteByte('\n')
+}
+
+type metricDeltaRow struct {
+	Container string
+	Metric    string
+	Before    float64
+	After     float64
+	Delta     float64
+}
+
+func metricDeltaRows(snapshots []metricDeltaSnapshot) []metricDeltaRow {
+	var rows []metricDeltaRow
+	for _, snapshot := range snapshots {
+		for metric, values := range snapshot.Metrics {
+			rows = append(rows, metricDeltaRow{
+				Container: snapshot.Name,
+				Metric:    metric,
+				Before:    values.Before,
+				After:     values.After,
+				Delta:     values.Delta,
+			})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Container == rows[j].Container {
+			return rows[i].Metric < rows[j].Metric
+		}
+		return rows[i].Container < rows[j].Container
+	})
+	return rows
+}
+
+type metricDeltaErrorRow struct {
+	Container string
+	Error     string
+}
+
+func metricDeltaErrors(snapshots []metricDeltaSnapshot) []metricDeltaErrorRow {
+	var rows []metricDeltaErrorRow
+	for _, snapshot := range snapshots {
+		if snapshot.Error != "" {
+			rows = append(rows, metricDeltaErrorRow{Container: snapshot.Name, Error: snapshot.Error})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Container < rows[j].Container })
+	return rows
+}
+
+func metricFloat(value float64) string {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Sprint(value)
+	}
+	if value == 0 {
+		return "0"
+	}
+	return strconv.FormatFloat(value, 'g', 8, 64)
+}
+
+func mdCell(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "|", `\|`)
+	return s
 }
 
 func hostMetadata(ctx context.Context) map[string]string {

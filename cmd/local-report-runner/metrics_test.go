@@ -17,6 +17,13 @@ func TestParsePrometheusMetricsKeepsSelectedSeries(t *testing.T) {
 cometbft_abci_connection_method_timing_seconds_sum{chain_id="sgldb",method="commit",type="sync"} 1.25
 cometbft_abci_connection_method_timing_seconds_count{chain_id="sgldb",method="commit",type="sync"} 5
 cometbft_consensus_height{chain_id="sgldb"} 10
+treedb_vlog_write_seconds_sum 2.5
+go_gc_duration_seconds_sum 0.125
+process_resident_memory_bytes 1234
+blockstore_save_block_seconds_sum 3
+tx_index_indexed_txs_total 4
+sdk_store_commit_seconds_sum 5
+app_custom_metric_total 6
 some_unrelated_metric 99
 tx_count 7
 `
@@ -27,8 +34,19 @@ tx_count 7
 	if got := metrics["tx_count"]; got != 7 {
 		t.Fatalf("tx_count = %v, want 7", got)
 	}
-	if _, ok := metrics[`cometbft_consensus_height{chain_id="sgldb"}`]; ok {
-		t.Fatalf("unselected consensus height metric was retained")
+	for name, want := range map[string]float64{
+		`cometbft_consensus_height{chain_id="sgldb"}`: 10,
+		"treedb_vlog_write_seconds_sum":               2.5,
+		"go_gc_duration_seconds_sum":                  0.125,
+		"process_resident_memory_bytes":               1234,
+		"blockstore_save_block_seconds_sum":           3,
+		"tx_index_indexed_txs_total":                  4,
+		"sdk_store_commit_seconds_sum":                5,
+		"app_custom_metric_total":                     6,
+	} {
+		if got := metrics[name]; got != want {
+			t.Fatalf("%s = %v, want %v", name, got, want)
+		}
 	}
 	if _, ok := metrics["some_unrelated_metric"]; ok {
 		t.Fatalf("unrelated metric was retained")
@@ -188,6 +206,145 @@ func TestSummarizeStorageSignalsComputesCommitShareAndSizeDelta(t *testing.T) {
 	}
 	if timing := signal.ModuleTimings[0]; timing.Phase != "begin_blocker" || timing.Module != "bank" || timing.Seconds != 0.5 || timing.Count != 2 || timing.AvgSeconds != 0.25 {
 		t.Fatalf("module timing = %+v, want begin_blocker bank 0.5s count 2 avg 0.25", timing)
+	}
+}
+
+func TestMetricDeltaSnapshotsPreserveBeforeAfterDelta(t *testing.T) {
+	before := []metricSnapshot{{
+		Name: "validator-0",
+		URL:  "http://127.0.0.1:26660/metrics",
+		Metrics: map[string]float64{
+			"treedb_vlog_write_seconds_sum":  1.5,
+			"process_cpu_seconds_total":      10,
+			`cometbft_mempool_size{lane=""}`: 3,
+		},
+	}}
+	after := []metricSnapshot{{
+		Name: "validator-0",
+		URL:  "http://127.0.0.1:26660/metrics",
+		Metrics: map[string]float64{
+			"treedb_vlog_write_seconds_sum":  4,
+			"process_cpu_seconds_total":      15.25,
+			`cometbft_mempool_size{lane=""}`: 0,
+			"treedb_checkpoint_runs_total":   2,
+		},
+	}}
+
+	deltas := metricDeltaSnapshots(before, after)
+	if len(deltas) != 1 {
+		t.Fatalf("deltas len = %d, want 1", len(deltas))
+	}
+	if got := deltas[0].Metrics["treedb_vlog_write_seconds_sum"]; got.Before != 1.5 || got.After != 4 || got.Delta != 2.5 {
+		t.Fatalf("treedb delta = %+v, want before 1.5 after 4 delta 2.5", got)
+	}
+	if got := deltas[0].Metrics["process_cpu_seconds_total"]; got.Delta != 5.25 {
+		t.Fatalf("process CPU delta = %+v, want delta 5.25", got)
+	}
+	if got := deltas[0].Metrics["treedb_checkpoint_runs_total"]; got.Before != 0 || got.After != 2 || got.Delta != 2 {
+		t.Fatalf("new metric delta = %+v, want before 0 after 2 delta 2", got)
+	}
+
+	payload, err := json.Marshal(loadWindowObservation{
+		MetricsBefore: before,
+		MetricsAfter:  after,
+		MetricDeltas:  deltas,
+	})
+	if err != nil {
+		t.Fatalf("marshal load window: %v", err)
+	}
+	for _, want := range []string{
+		`"metrics_before"`,
+		`"metrics_after"`,
+		`"metric_deltas"`,
+		`"before":1.5`,
+		`"after":4`,
+		`"delta":2.5`,
+	} {
+		if !strings.Contains(string(payload), want) {
+			t.Fatalf("payload missing %s: %s", want, payload)
+		}
+	}
+}
+
+func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T) {
+	artifact := reportArtifact{
+		GeneratedAt: time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC),
+		Git: map[string]string{
+			"branch": "codex/3582-accepted-window-attribution",
+			"head":   "abc123",
+		},
+		Results: []runResult{{
+			Scenario: scenario{Name: "plain-send"},
+			LoadWindow: &loadWindowObservation{
+				Reached:                true,
+				DurationSatisfied:      true,
+				Seconds:                12.5,
+				IncludedTransactions:   100,
+				SuccessfulTransactions: 100,
+				TargetTransactions:     100,
+				MetricDeltas: []metricDeltaSnapshot{{
+					Name: "validator-0",
+					Metrics: map[string]metricDeltaValue{
+						"treedb_vlog_write_seconds_sum": {Before: 1, After: 3.25, Delta: 2.25},
+					},
+				}},
+			},
+			ProfileArtifacts: []profileArtifact{
+				{
+					Name:           "plain-send",
+					Kind:           "validator_block",
+					Boundary:       profileBoundaryWholeRun,
+					Path:           "/tmp/plain-send-block.pprof",
+					TopSummaryPath: "/tmp/plain-send-block.pprof.top.txt",
+				},
+				{
+					Name:     "plain-send",
+					Kind:     "validator_mutex",
+					Boundary: profileBoundaryWholeRun,
+					Error:    "fetch validator_mutex profile exit 1",
+				},
+			},
+		}},
+	}
+
+	md := renderReportMarkdown(artifact)
+	for _, want := range []string{
+		"## plain-send Accepted Window",
+		"### Accepted-Window Metric Deltas",
+		"treedb_vlog_write_seconds_sum",
+		"| validator-0 | treedb_vlog_write_seconds_sum | 1 | 3.25 | 2.25 |",
+		"## plain-send Profile Manifest",
+		"validator_block",
+		profileBoundaryWholeRun,
+		"/tmp/plain-send-block.pprof.top.txt",
+		"fetch validator_mutex profile exit 1",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, md)
+		}
+	}
+}
+
+func TestAppProfileRequestsKeepsExtendedPprofOptIn(t *testing.T) {
+	sc := withAppHeapProfile(scenario{Name: "plain-send", BaseImage: "simapp"})
+	if got := appProfileRequests(sc, "", "", ""); len(got) != 0 {
+		t.Fatalf("profile requests without dirs len = %d, want 0", len(got))
+	}
+
+	requests := appProfileRequests(sc, "", "", "/tmp/profiles")
+	var kinds []string
+	for _, req := range requests {
+		kinds = append(kinds, req.Kind+":"+req.Boundary)
+	}
+	want := []string{
+		"validator_heap:" + profileBoundaryLoadWindowAdjacent,
+		"validator_allocs:" + profileBoundaryWholeRun,
+		"validator_block:" + profileBoundaryWholeRun,
+		"validator_mutex:" + profileBoundaryWholeRun,
+		"validator_goroutine:" + profileBoundaryLoadWindowAdjacent,
+	}
+	if strings.Join(kinds, ",") != strings.Join(want, ",") {
+		t.Fatalf("profile requests = %v, want %v", kinds, want)
 	}
 }
 
