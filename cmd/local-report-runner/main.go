@@ -1346,6 +1346,9 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	result.LoadTestLogs = trimLog(loadResp.TaskLogs, 40000)
 	result.LoadTestStopped = loadResp.StoppedReason
 	result.LoadTestLogSummary = summarizeLoadTestLogs(loadResp.TaskLogs)
+	endPhase = startPhase(&result, "collect_app_profiles", "")
+	result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfiles(ctx, launchResp.ProviderState, launchResp.ChainState, sc, appCPUProfileDir, appHeapProfileDir, appPprofProfileDir)...)
+	endPhase()
 	if !sc.IsEVMChain && rawTxAudit {
 		endPhase = startPhase(&result, "raw_tx_audit", "")
 		result.RawTxAudit = auditRawTxs(ctx, result.ProviderName, sc.ChainName, loadResp.TaskLogs, loadResp.Result)
@@ -1355,9 +1358,6 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 		result.RawTxAuditSkipped = "disabled by -raw-tx-audit=false"
 	}
 	result.CorrectedLoadTest = summarizeCorrectedLoadTest(result)
-	endPhase = startPhase(&result, "collect_app_cpu_profile", "")
-	result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfiles(ctx, launchResp.ProviderState, launchResp.ChainState, sc, appCPUProfileDir, appHeapProfileDir, appPprofProfileDir)...)
-	endPhase()
 	result.Derived = deriveMetrics(sc, result)
 	if len(loadResp.ProviderState) != 0 {
 		providerStateForTeardown = loadResp.ProviderState
