@@ -425,8 +425,6 @@ func TestAppProfileRequestsKeepsExtendedPprofOptIn(t *testing.T) {
 	want := []string{
 		"validator_heap:" + profileBoundaryLoadWindowAdjacent,
 		"validator_allocs:" + profileBoundaryWholeRun,
-		"validator_block:" + profileBoundaryWholeRun,
-		"validator_mutex:" + profileBoundaryWholeRun,
 		"validator_goroutine:" + profileBoundaryLoadWindowAdjacent,
 	}
 	if strings.Join(kinds, ",") != strings.Join(want, ",") {

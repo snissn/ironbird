@@ -2053,8 +2053,6 @@ func appProfileRequests(sc scenario, cpuOutDir, heapOutDir, pprofOutDir string) 
 		}{
 			{kind: "validator_heap", endpoint: "heap?gc=1", suffix: "heap", boundary: profileBoundaryLoadWindowAdjacent},
 			{kind: "validator_allocs", endpoint: "allocs", suffix: "allocs", boundary: profileBoundaryWholeRun},
-			{kind: "validator_block", endpoint: "block", suffix: "block", boundary: profileBoundaryWholeRun},
-			{kind: "validator_mutex", endpoint: "mutex", suffix: "mutex", boundary: profileBoundaryWholeRun},
 			{kind: "validator_goroutine", endpoint: "goroutine", suffix: "goroutine", boundary: profileBoundaryLoadWindowAdjacent},
 		} {
 			fileName := appPprofFileName(sc, profile.suffix)
