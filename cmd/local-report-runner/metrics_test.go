@@ -432,6 +432,29 @@ func TestAppProfileRequestsKeepsExtendedPprofOptIn(t *testing.T) {
 	}
 }
 
+func TestSplitAppProfileRequestsForRawTxAuditKeepsCPUAfterAudit(t *testing.T) {
+	sc := withAppCPUProfile(withAppHeapProfile(scenario{Name: "plain-send", BaseImage: "simapp"}))
+	requests := appProfileRequests(sc, "/tmp/cpu", "/tmp/profiles", "/tmp/profiles")
+	preAudit, postAudit := splitAppProfileRequestsForRawTxAudit(requests)
+
+	for _, req := range preAudit {
+		if req.Kind == "validator_cpu" {
+			t.Fatalf("pre-audit request contains stopping CPU profile: %+v", req)
+		}
+	}
+	var preKinds []string
+	for _, req := range preAudit {
+		preKinds = append(preKinds, req.Kind)
+	}
+	wantPre := []string{"validator_heap", "validator_allocs", "validator_goroutine"}
+	if strings.Join(preKinds, ",") != strings.Join(wantPre, ",") {
+		t.Fatalf("pre-audit profile kinds = %v, want %v", preKinds, wantPre)
+	}
+	if len(postAudit) != 1 || postAudit[0].Kind != "validator_cpu" {
+		t.Fatalf("post-audit requests = %+v, want only validator_cpu", postAudit)
+	}
+}
+
 func TestLabelValue(t *testing.T) {
 	expr := `begin_blocker_sum{chain_id="streedb",module="distribution"}`
 	if got := labelValue(expr, "module"); got != "distribution" {

@@ -1346,8 +1346,9 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	result.LoadTestLogs = trimLog(loadResp.TaskLogs, 40000)
 	result.LoadTestStopped = loadResp.StoppedReason
 	result.LoadTestLogSummary = summarizeLoadTestLogs(loadResp.TaskLogs)
+	preAuditProfileRequests, postAuditProfileRequests := splitAppProfileRequestsForRawTxAudit(appProfileRequests(sc, appCPUProfileDir, appHeapProfileDir, appPprofProfileDir))
 	endPhase = startPhase(&result, "collect_app_profiles", "")
-	result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfiles(ctx, launchResp.ProviderState, launchResp.ChainState, sc, appCPUProfileDir, appHeapProfileDir, appPprofProfileDir)...)
+	result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfileRequests(ctx, launchResp.ProviderState, launchResp.ChainState, sc, preAuditProfileRequests)...)
 	endPhase()
 	if !sc.IsEVMChain && rawTxAudit {
 		endPhase = startPhase(&result, "raw_tx_audit", "")
@@ -1356,6 +1357,11 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 		endPhase()
 	} else if !sc.IsEVMChain {
 		result.RawTxAuditSkipped = "disabled by -raw-tx-audit=false"
+	}
+	if len(postAuditProfileRequests) != 0 {
+		endPhase = startPhase(&result, "collect_app_cpu_profile", "")
+		result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfileRequests(ctx, launchResp.ProviderState, launchResp.ChainState, sc, postAuditProfileRequests)...)
+		endPhase()
 	}
 	result.CorrectedLoadTest = summarizeCorrectedLoadTest(result)
 	result.Derived = deriveMetrics(sc, result)
@@ -1989,6 +1995,10 @@ func (req appProfileRequest) artifact(scenarioName string) profileArtifact {
 
 func collectAppProfiles(ctx context.Context, providerState, chainState []byte, sc scenario, cpuOutDir, heapOutDir, pprofOutDir string) []profileArtifact {
 	requests := appProfileRequests(sc, cpuOutDir, heapOutDir, pprofOutDir)
+	return collectAppProfileRequests(ctx, providerState, chainState, sc, requests)
+}
+
+func collectAppProfileRequests(ctx context.Context, providerState, chainState []byte, sc scenario, requests []appProfileRequest) []profileArtifact {
 	if len(requests) == 0 {
 		return nil
 	}
@@ -2031,6 +2041,19 @@ func collectAppProfiles(ctx context.Context, providerState, chainState []byte, s
 		}
 	}
 	return attachPprofTopSummaries(ctx, artifacts)
+}
+
+func splitAppProfileRequestsForRawTxAudit(requests []appProfileRequest) ([]appProfileRequest, []appProfileRequest) {
+	preAudit := make([]appProfileRequest, 0, len(requests))
+	postAudit := make([]appProfileRequest, 0, 1)
+	for _, req := range requests {
+		if req.Kind == "validator_cpu" {
+			postAudit = append(postAudit, req)
+			continue
+		}
+		preAudit = append(preAudit, req)
+	}
+	return preAudit, postAudit
 }
 
 func appProfileRequests(sc scenario, cpuOutDir, heapOutDir, pprofOutDir string) []appProfileRequest {
