@@ -960,12 +960,12 @@ func makePreseedConfig(profile string, accounts, activeWallets int) preseedConfi
 const (
 	simappCosmosDBVersion = "v0.0.0-20260701184343-6ddcb75557e5"
 	simappCosmosDBRef     = "6ddcb75557e59bc4e6668ac7699cd52b63b3e402"
-	simappGomapVersion    = "v0.6.2-0.20260705085743-cabb7a17fb88"
-	simappGomapRef        = "cabb7a17fb8809aebcd33f6c007907cf0caddcc7"
+	simappGomapVersion    = "v0.6.2-0.20260706130313-b817b44247cf"
+	simappGomapRef        = "b817b44247cf02b4f4b417b618dcc03b5b4da0e3"
 	simappIAVLVersion     = "v0.0.0-20260701072929-12a26715119b"
 	simappIAVLRef         = "12a26715119bb3ea55289ffd7b256161effc7b8b"
-	simappCometDBVersion  = "v0.0.0-20260701074104-b4f87847a725"
-	simappCometDBRef      = "b4f87847a725f92a046d927ce4a0f5b08b965995"
+	simappCometDBVersion  = "v0.0.0-20260706091624-085ecbd0c122"
+	simappCometDBRef      = "085ecbd0c12278cc0f127872acd75d77a79df931"
 )
 
 func simappDependencyPins(includeCometDB bool) []dependencyPin {
@@ -1074,9 +1074,9 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend string, incl
 
 func simappImageTag(includeCometDB bool) string {
 	if includeCometDB {
-		return "ironbird-report:snissn-sdk-28e5525f-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-cabb7a1"
+		return "ironbird-report:snissn-sdk-28e5525f-fullstack-cosmosdb-6ddcb75-cometdb-085ecb-gomap-b817b44"
 	}
-	return "ironbird-report:snissn-sdk-28e5525f-cosmosdb-6ddcb75-gomap-cabb7a1"
+	return "ironbird-report:snissn-sdk-28e5525f-cosmosdb-6ddcb75-gomap-b817b44"
 }
 
 func celestiaSyncScenario(cfg celestiaSyncConfig) scenario {
