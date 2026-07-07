@@ -24,7 +24,9 @@ if [[ ! -x "$RUNNER" || "${REBUILD_RUNNER:-false}" == "true" ]]; then
 fi
 
 summary="$OUT_ROOT/summary.tsv"
-printf 'workload\tbackend\tattempt\taccepted\tblocks\ttxs_per_block\tload_window_seconds\tsuccessful\truntime_tps\tload_window_tps\twall_tps\tjson\n' > "$summary"
+if [[ ! -f "$summary" ]]; then
+  printf 'workload\tbackend\tattempt\taccepted\tblocks\ttxs_per_block\tload_window_seconds\tsuccessful\truntime_tps\tload_window_tps\twall_tps\tjson\n' > "$summary"
+fi
 
 log() {
   printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
