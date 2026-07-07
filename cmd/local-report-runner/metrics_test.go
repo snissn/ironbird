@@ -235,6 +235,58 @@ func TestSummarizeStorageSignalsComputesCommitShareAndSizeDelta(t *testing.T) {
 	}
 }
 
+func TestSummarizePipelineSignalsPromotesAcceptedWindowCounters(t *testing.T) {
+	obs := loadWindowObservation{
+		Seconds:                120,
+		IncludedTransactions:   60000,
+		SuccessfulTransactions: 59000,
+		StorageSignals: []storageSignal{{
+			Name:                          "validator-0",
+			ABCICheckTxSeconds:            6,
+			ABCICheckTxCount:              60000,
+			ABCIFinalizeBlockSeconds:      18,
+			ABCIFinalizeBlockCount:        60,
+			ABCICommitSeconds:             3,
+			ABCICommitCount:               60,
+			ConsensusBlockIntervalSeconds: 120,
+			ConsensusBlockIntervalCount:   60,
+			ConsensusTotalTxsDelta:        60000,
+			MempoolSuccessfulTxsDelta:     59000,
+			SDKTxCountDelta:               60000,
+			SDKTxSuccessfulDelta:          59000,
+		}},
+	}
+	logs := loadTestLogSummary{
+		SendingTxsTotal:        62000,
+		FailedSendTotal:        2,
+		CollectorStartingBlock: 100,
+		CollectorEndingBlock:   159,
+	}
+	rows := summarizePipelineSignals(obs, logs)
+	if len(rows) != 1 {
+		t.Fatalf("pipeline rows len=%d want 1", len(rows))
+	}
+	row := rows[0]
+	if row.SubmittedTransactions != 62000 || row.SubmittedMinusIncluded != 2000 {
+		t.Fatalf("submitted/gap=%d/%d want 62000/2000", row.SubmittedTransactions, row.SubmittedMinusIncluded)
+	}
+	if row.CollectorBlockSpan != 60 {
+		t.Fatalf("collector block span=%d want 60", row.CollectorBlockSpan)
+	}
+	if row.AvgBlockIntervalSeconds != 2 {
+		t.Fatalf("avg block interval=%v want 2", row.AvgBlockIntervalSeconds)
+	}
+	if row.AvgTxsPerCommit != 1000 || row.AvgTxsPerConsensusBlock != 1000 {
+		t.Fatalf("tx/block commit=%v consensus=%v want 1000/1000", row.AvgTxsPerCommit, row.AvgTxsPerConsensusBlock)
+	}
+	if row.AvgCheckTxSeconds != 0.0001 || row.AvgFinalizeBlockSeconds != 0.3 || row.AvgCommitSeconds != 0.05 {
+		t.Fatalf("avg ABCI timings=%v/%v/%v want 0.0001/0.3/0.05", row.AvgCheckTxSeconds, row.AvgFinalizeBlockSeconds, row.AvgCommitSeconds)
+	}
+	if len(row.Notes) == 0 {
+		t.Fatalf("expected send-gap note")
+	}
+}
+
 func TestMetricDeltaSnapshotsPreserveBeforeAfterDelta(t *testing.T) {
 	before := []metricSnapshot{{
 		Name: "validator-0",
@@ -339,6 +391,19 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 				IncludedTransactions:   100,
 				SuccessfulTransactions: 100,
 				TargetTransactions:     100,
+				PipelineSignals: []pipelineSignal{{
+					Name:                    "validator-0",
+					SubmittedTransactions:   120,
+					IncludedTransactions:    100,
+					SuccessfulTransactions:  100,
+					SubmittedMinusIncluded:  20,
+					CollectorBlockSpan:      10,
+					AvgTxsPerConsensusBlock: 10,
+					AvgBlockIntervalSeconds: 1.25,
+					AvgCheckTxSeconds:       0.001,
+					AvgFinalizeBlockSeconds: 0.2,
+					AvgCommitSeconds:        0.05,
+				}},
 				MetricDeltas: []metricDeltaSnapshot{{
 					Name: "validator-0",
 					Metrics: map[string]metricDeltaValue{
@@ -375,6 +440,8 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 	md := renderReportMarkdown(artifact)
 	for _, want := range []string{
 		"## plain-send Accepted Window",
+		"### Accepted-Window Transaction Pipeline Summary",
+		"| validator-0 | 120 | 100 | 100 | 20 | 10 | 10 | 1.25 | 0.001 | 0.2 | 0.05 |",
 		"### Accepted-Window Metric Deltas",
 		"treedb_vlog_write_seconds_sum",
 		"| validator-0 | treedb_vlog_write_seconds_sum | 1 | 3.25 | 2.25 |",
