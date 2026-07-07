@@ -391,6 +391,14 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 				IncludedTransactions:   100,
 				SuccessfulTransactions: 100,
 				TargetTransactions:     100,
+				PhaseOverlaps: []loadWindowPhaseOverlap{{
+					Name:                "run_load_test",
+					PhaseSeconds:        15,
+					BeforeWindowSeconds: 2.5,
+					InWindowSeconds:     12.5,
+					Classification:      "crosses_window_start",
+					Note:                "wallets=100",
+				}},
 				PipelineSignals: []pipelineSignal{{
 					Name:                    "validator-0",
 					SubmittedTransactions:   120,
@@ -440,6 +448,8 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 	md := renderReportMarkdown(artifact)
 	for _, want := range []string{
 		"## plain-send Accepted Window",
+		"### Accepted-Window Phase Overlap",
+		"| run_load_test | crosses_window_start | 15 | 2.5 | 12.5 | 0 | wallets=100 |",
 		"### Accepted-Window Transaction Pipeline Summary",
 		"| validator-0 | 120 | 100 | 100 | 20 | 10 | 10 | 1.25 | 0.001 | 0.2 | 0.05 |",
 		"### Accepted-Window Metric Deltas",
@@ -885,6 +895,52 @@ func TestStartPhaseRecordsTimeline(t *testing.T) {
 	}
 	if span.Seconds < 0 {
 		t.Fatalf("span seconds = %v, want non-negative", span.Seconds)
+	}
+}
+
+func TestSummarizeLoadWindowPhaseOverlaps(t *testing.T) {
+	base := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	obs := loadWindowObservation{
+		StartedAt: base.Add(10 * time.Second),
+		EndedAt:   base.Add(30 * time.Second),
+	}
+	spans := []phaseSpan{
+		{
+			Name:    "before",
+			Started: base,
+			Ended:   base.Add(5 * time.Second),
+		},
+		{
+			Name:    "load",
+			Started: base.Add(8 * time.Second),
+			Ended:   base.Add(24 * time.Second),
+		},
+		{
+			Name:    "spans",
+			Started: base.Add(2 * time.Second),
+			Ended:   base.Add(40 * time.Second),
+		},
+		{
+			Name:    "after",
+			Started: base.Add(31 * time.Second),
+			Ended:   base.Add(35 * time.Second),
+		},
+	}
+	got := summarizeLoadWindowPhaseOverlaps(spans, obs)
+	if len(got) != 4 {
+		t.Fatalf("overlap rows = %d, want 4", len(got))
+	}
+	if got[0].Classification != "before_window" || got[0].BeforeWindowSeconds != 5 {
+		t.Fatalf("before row = %+v, want before_window with 5s before", got[0])
+	}
+	if got[1].Classification != "crosses_window_start" || got[1].BeforeWindowSeconds != 2 || got[1].InWindowSeconds != 14 {
+		t.Fatalf("load row = %+v, want 2s before and 14s inside", got[1])
+	}
+	if got[2].Classification != "spans_window" || got[2].BeforeWindowSeconds != 8 || got[2].InWindowSeconds != 20 || got[2].AfterWindowSeconds != 10 {
+		t.Fatalf("spans row = %+v, want 8s before, 20s inside, 10s after", got[2])
+	}
+	if got[3].Classification != "after_window" || got[3].AfterWindowSeconds != 4 {
+		t.Fatalf("after row = %+v, want after_window with 4s after", got[3])
 	}
 }
 
