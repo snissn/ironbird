@@ -134,6 +134,14 @@ run_until_accepted() {
   return 1
 }
 
+row_already_accepted() {
+  local workload="$1"
+  local backend="$2"
+  [[ -f "$summary" ]] || return 1
+  awk -F '\t' -v workload="$workload" -v backend="$backend" \
+    'NR > 1 && $1 == workload && $2 == backend && $4 == "true" { found = 1 } END { exit found ? 0 : 1 }' "$summary"
+}
+
 # workload base_blocks txs msg contained msgs_per_tx recipients max_gas
 matrix=(
   "plain-send 400 500 MsgSend MsgSend 1 1 75000000"
@@ -144,6 +152,10 @@ failures=0
 for row in "${matrix[@]}"; do
   read -r workload blocks txs msg contained msgs_per_tx recipients max_gas <<<"$row"
   for backend in goleveldb treedb; do
+    if row_already_accepted "$workload" "$backend"; then
+      log "skipping already accepted workload=$workload backend=$backend"
+      continue
+    fi
     if ! run_until_accepted "$workload" "$backend" "$blocks" "$txs" "$msg" "$contained" "$msgs_per_tx" "$recipients" "$max_gas"; then
       failures=$((failures + 1))
     fi
