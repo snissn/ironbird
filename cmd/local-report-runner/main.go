@@ -146,6 +146,18 @@ type phaseSpan struct {
 	Note    string    `json:"note,omitempty"`
 }
 
+type loadWindowPhaseOverlap struct {
+	Name                string    `json:"name"`
+	Note                string    `json:"note,omitempty"`
+	Started             time.Time `json:"started"`
+	Ended               time.Time `json:"ended"`
+	PhaseSeconds        float64   `json:"phase_seconds,omitempty"`
+	BeforeWindowSeconds float64   `json:"before_window_seconds,omitempty"`
+	InWindowSeconds     float64   `json:"in_window_seconds,omitempty"`
+	AfterWindowSeconds  float64   `json:"after_window_seconds,omitempty"`
+	Classification      string    `json:"classification,omitempty"`
+}
+
 type backendVerification struct {
 	ExpectedAppDBBackend  string `json:"expected_app_db_backend,omitempty"`
 	ExpectedNodeDBBackend string `json:"expected_node_db_backend,omitempty"`
@@ -263,25 +275,26 @@ type storageSignal struct {
 }
 
 type loadWindowObservation struct {
-	TargetTransactions     int                   `json:"target_transactions,omitempty"`
-	MinimumSeconds         float64               `json:"minimum_seconds,omitempty"`
-	DurationSatisfied      bool                  `json:"duration_satisfied"`
-	Reached                bool                  `json:"reached,omitempty"`
-	StartedAt              time.Time             `json:"started_at,omitempty"`
-	EndedAt                time.Time             `json:"ended_at,omitempty"`
-	Seconds                float64               `json:"seconds,omitempty"`
-	IncludedTransactions   int                   `json:"included_transactions,omitempty"`
-	SuccessfulTransactions int                   `json:"successful_transactions,omitempty"`
-	AppMetricCandidates    []string              `json:"app_metric_candidates,omitempty"`
-	MetricsBefore          []metricSnapshot      `json:"metrics_before,omitempty"`
-	MetricsAfter           []metricSnapshot      `json:"metrics_after,omitempty"`
-	MetricDeltas           []metricDeltaSnapshot `json:"metric_deltas,omitempty"`
-	TreeDBStatsBefore      []treeDBStatsSnapshot `json:"treedb_stats_before,omitempty"`
-	TreeDBStatsAfter       []treeDBStatsSnapshot `json:"treedb_stats_after,omitempty"`
-	TreeDBStatDeltas       []treeDBStatsDelta    `json:"treedb_stat_deltas,omitempty"`
-	StorageSignals         []storageSignal       `json:"storage_signal_summary,omitempty"`
-	PipelineSignals        []pipelineSignal      `json:"pipeline_signal_summary,omitempty"`
-	Error                  string                `json:"error,omitempty"`
+	TargetTransactions     int                      `json:"target_transactions,omitempty"`
+	MinimumSeconds         float64                  `json:"minimum_seconds,omitempty"`
+	DurationSatisfied      bool                     `json:"duration_satisfied"`
+	Reached                bool                     `json:"reached,omitempty"`
+	StartedAt              time.Time                `json:"started_at,omitempty"`
+	EndedAt                time.Time                `json:"ended_at,omitempty"`
+	Seconds                float64                  `json:"seconds,omitempty"`
+	IncludedTransactions   int                      `json:"included_transactions,omitempty"`
+	SuccessfulTransactions int                      `json:"successful_transactions,omitempty"`
+	AppMetricCandidates    []string                 `json:"app_metric_candidates,omitempty"`
+	MetricsBefore          []metricSnapshot         `json:"metrics_before,omitempty"`
+	MetricsAfter           []metricSnapshot         `json:"metrics_after,omitempty"`
+	MetricDeltas           []metricDeltaSnapshot    `json:"metric_deltas,omitempty"`
+	TreeDBStatsBefore      []treeDBStatsSnapshot    `json:"treedb_stats_before,omitempty"`
+	TreeDBStatsAfter       []treeDBStatsSnapshot    `json:"treedb_stats_after,omitempty"`
+	TreeDBStatDeltas       []treeDBStatsDelta       `json:"treedb_stat_deltas,omitempty"`
+	StorageSignals         []storageSignal          `json:"storage_signal_summary,omitempty"`
+	PipelineSignals        []pipelineSignal         `json:"pipeline_signal_summary,omitempty"`
+	PhaseOverlaps          []loadWindowPhaseOverlap `json:"phase_overlaps,omitempty"`
+	Error                  string                   `json:"error,omitempty"`
 }
 
 type pipelineSignal struct {
@@ -1267,6 +1280,9 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	defer func() {
 		result.FinishedAt = time.Now()
 		result.WallSeconds = result.FinishedAt.Sub(result.StartedAt).Seconds()
+		if result.LoadWindow != nil {
+			result.LoadWindow.PhaseOverlaps = summarizeLoadWindowPhaseOverlaps(result.PhaseTimeline, *result.LoadWindow)
+		}
 		if result.LoadTestResult.Overall.TotalTransactions != 0 || result.RawTxSummary != nil || result.CorrectedLoadTest != nil {
 			result.Derived = deriveMetrics(sc, result)
 		}
@@ -1998,6 +2014,64 @@ func phaseSeconds(result runResult, name string) float64 {
 		}
 	}
 	return 0
+}
+
+func summarizeLoadWindowPhaseOverlaps(spans []phaseSpan, obs loadWindowObservation) []loadWindowPhaseOverlap {
+	if len(spans) == 0 || obs.StartedAt.IsZero() || obs.EndedAt.IsZero() || !obs.EndedAt.After(obs.StartedAt) {
+		return nil
+	}
+	out := make([]loadWindowPhaseOverlap, 0, len(spans))
+	for _, span := range spans {
+		if span.Started.IsZero() || span.Ended.IsZero() || !span.Ended.After(span.Started) {
+			continue
+		}
+		row := loadWindowPhaseOverlap{
+			Name:         span.Name,
+			Note:         span.Note,
+			Started:      span.Started,
+			Ended:        span.Ended,
+			PhaseSeconds: span.Ended.Sub(span.Started).Seconds(),
+		}
+		if span.Started.Before(obs.StartedAt) {
+			beforeEnd := minTime(span.Ended, obs.StartedAt)
+			if beforeEnd.After(span.Started) {
+				row.BeforeWindowSeconds = beforeEnd.Sub(span.Started).Seconds()
+			}
+		}
+		inStart := maxTime(span.Started, obs.StartedAt)
+		inEnd := minTime(span.Ended, obs.EndedAt)
+		if inEnd.After(inStart) {
+			row.InWindowSeconds = inEnd.Sub(inStart).Seconds()
+		}
+		if span.Ended.After(obs.EndedAt) {
+			afterStart := maxTime(span.Started, obs.EndedAt)
+			if span.Ended.After(afterStart) {
+				row.AfterWindowSeconds = span.Ended.Sub(afterStart).Seconds()
+			}
+		}
+		row.Classification = classifyLoadWindowPhase(row)
+		out = append(out, row)
+	}
+	return out
+}
+
+func classifyLoadWindowPhase(row loadWindowPhaseOverlap) string {
+	switch {
+	case row.InWindowSeconds == 0 && row.BeforeWindowSeconds > 0 && row.AfterWindowSeconds == 0:
+		return "before_window"
+	case row.InWindowSeconds == 0 && row.AfterWindowSeconds > 0 && row.BeforeWindowSeconds == 0:
+		return "after_window"
+	case row.BeforeWindowSeconds > 0 && row.AfterWindowSeconds > 0:
+		return "spans_window"
+	case row.BeforeWindowSeconds > 0:
+		return "crosses_window_start"
+	case row.AfterWindowSeconds > 0:
+		return "crosses_window_end"
+	case row.InWindowSeconds > 0:
+		return "inside_window"
+	default:
+		return "outside_window"
+	}
 }
 
 type loadWindowMonitor struct {
@@ -4614,6 +4688,7 @@ func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
 		b.WriteString(mdCell(obs.Error))
 		b.WriteString("\n\n")
 	}
+	writeLoadWindowPhaseOverlapsMarkdown(b, obs.PhaseOverlaps)
 	writePipelineSignalsMarkdown(b, obs.PipelineSignals)
 
 	rows := metricDeltaRows(obs.MetricDeltas)
@@ -4721,6 +4796,33 @@ func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
 		}
 		b.WriteByte('\n')
 	}
+}
+
+func writeLoadWindowPhaseOverlapsMarkdown(b *strings.Builder, rows []loadWindowPhaseOverlap) {
+	if len(rows) == 0 {
+		return
+	}
+	b.WriteString("### Accepted-Window Phase Overlap\n\n")
+	b.WriteString("| Phase | Class | Phase s | Before s | In-window s | After s | Note |\n")
+	b.WriteString("| --- | --- | ---: | ---: | ---: | ---: | --- |\n")
+	for _, row := range rows {
+		b.WriteString("| ")
+		b.WriteString(mdCell(row.Name))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(row.Classification))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.PhaseSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.BeforeWindowSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.InWindowSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.AfterWindowSeconds))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(row.Note))
+		b.WriteString(" |\n")
+	}
+	b.WriteByte('\n')
 }
 
 func writePipelineSignalsMarkdown(b *strings.Builder, rows []pipelineSignal) {
