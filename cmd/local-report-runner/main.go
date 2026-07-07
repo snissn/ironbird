@@ -280,7 +280,41 @@ type loadWindowObservation struct {
 	TreeDBStatsAfter       []treeDBStatsSnapshot `json:"treedb_stats_after,omitempty"`
 	TreeDBStatDeltas       []treeDBStatsDelta    `json:"treedb_stat_deltas,omitempty"`
 	StorageSignals         []storageSignal       `json:"storage_signal_summary,omitempty"`
+	PipelineSignals        []pipelineSignal      `json:"pipeline_signal_summary,omitempty"`
 	Error                  string                `json:"error,omitempty"`
+}
+
+type pipelineSignal struct {
+	Name                          string   `json:"name"`
+	WindowSeconds                 float64  `json:"window_seconds,omitempty"`
+	SubmittedTransactions         int      `json:"submitted_transactions,omitempty"`
+	IncludedTransactions          int      `json:"included_transactions,omitempty"`
+	SuccessfulTransactions        int      `json:"successful_transactions,omitempty"`
+	FailedSendTotal               int      `json:"failed_send_total,omitempty"`
+	SubmittedMinusIncluded        int      `json:"submitted_minus_included,omitempty"`
+	CollectorStartingBlock        uint64   `json:"collector_starting_block,omitempty"`
+	CollectorEndingBlock          uint64   `json:"collector_ending_block,omitempty"`
+	CollectorBlockSpan            uint64   `json:"collector_block_span,omitempty"`
+	ConsensusTotalTxsDelta        float64  `json:"consensus_total_txs_delta,omitempty"`
+	MempoolSuccessfulTxsDelta     float64  `json:"mempool_successful_txs_delta,omitempty"`
+	SDKTxCountDelta               float64  `json:"sdk_tx_count_delta,omitempty"`
+	SDKTxSuccessfulDelta          float64  `json:"sdk_tx_successful_delta,omitempty"`
+	ABCICheckTxSeconds            float64  `json:"abci_check_tx_seconds,omitempty"`
+	ABCICheckTxCount              int      `json:"abci_check_tx_count,omitempty"`
+	AvgCheckTxSeconds             float64  `json:"avg_check_tx_seconds,omitempty"`
+	ABCIFinalizeBlockSeconds      float64  `json:"abci_finalize_block_seconds,omitempty"`
+	ABCIFinalizeBlockCount        int      `json:"abci_finalize_block_count,omitempty"`
+	AvgFinalizeBlockSeconds       float64  `json:"avg_finalize_block_seconds,omitempty"`
+	ABCICommitSeconds             float64  `json:"abci_commit_seconds,omitempty"`
+	ABCICommitCount               int      `json:"abci_commit_count,omitempty"`
+	AvgCommitSeconds              float64  `json:"avg_commit_seconds,omitempty"`
+	ConsensusBlockIntervalSeconds float64  `json:"consensus_block_interval_seconds,omitempty"`
+	ConsensusBlockIntervalCount   int      `json:"consensus_block_interval_count,omitempty"`
+	AvgBlockIntervalSeconds       float64  `json:"avg_block_interval_seconds,omitempty"`
+	AvgTxsPerCommit               float64  `json:"avg_txs_per_commit,omitempty"`
+	AvgTxsPerFinalizeBlock        float64  `json:"avg_txs_per_finalize_block,omitempty"`
+	AvgTxsPerConsensusBlock       float64  `json:"avg_txs_per_consensus_block,omitempty"`
+	Notes                         []string `json:"notes,omitempty"`
 }
 
 type moduleTiming struct {
@@ -1461,6 +1495,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	result.LoadTestLogs = trimLog(loadResp.TaskLogs, 40000)
 	result.LoadTestStopped = loadResp.StoppedReason
 	result.LoadTestLogSummary = summarizeLoadTestLogs(loadResp.TaskLogs)
+	populateLoadWindowPipelineSignals(&result)
 	preAuditProfileRequests, postAuditProfileRequests := splitAppProfileRequestsForRawTxAudit(appProfileRequests(sc, appProfiles))
 	endPhase = startPhase(&result, "collect_app_profiles", "")
 	result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfileRequests(ctx, launchResp.ProviderState, launchResp.ChainState, sc, preAuditProfileRequests)...)
@@ -3764,6 +3799,81 @@ func summarizeLoadTestLogs(logs string) loadTestLogSummary {
 	return summary
 }
 
+func populateLoadWindowPipelineSignals(result *runResult) {
+	if result == nil || result.LoadWindow == nil {
+		return
+	}
+	result.LoadWindow.PipelineSignals = summarizePipelineSignals(*result.LoadWindow, result.LoadTestLogSummary)
+}
+
+func summarizePipelineSignals(obs loadWindowObservation, logs loadTestLogSummary) []pipelineSignal {
+	if len(obs.StorageSignals) == 0 {
+		return nil
+	}
+	submitted := maxInt(logs.SendingTxsTotal, logs.GoRoutinesCompletedTotal)
+	if logs.RunnerOverall != nil {
+		submitted = maxInt(submitted, logs.RunnerOverall.TotalTransactions)
+	}
+	collectorSpan := uint64(0)
+	if logs.CollectorEndingBlock >= logs.CollectorStartingBlock && logs.CollectorEndingBlock != 0 {
+		collectorSpan = logs.CollectorEndingBlock - logs.CollectorStartingBlock + 1
+	}
+	out := make([]pipelineSignal, 0, len(obs.StorageSignals))
+	for _, signal := range obs.StorageSignals {
+		row := pipelineSignal{
+			Name:                          signal.Name,
+			WindowSeconds:                 obs.Seconds,
+			SubmittedTransactions:         submitted,
+			IncludedTransactions:          obs.IncludedTransactions,
+			SuccessfulTransactions:        obs.SuccessfulTransactions,
+			FailedSendTotal:               logs.FailedSendTotal,
+			CollectorStartingBlock:        logs.CollectorStartingBlock,
+			CollectorEndingBlock:          logs.CollectorEndingBlock,
+			CollectorBlockSpan:            collectorSpan,
+			ConsensusTotalTxsDelta:        signal.ConsensusTotalTxsDelta,
+			MempoolSuccessfulTxsDelta:     signal.MempoolSuccessfulTxsDelta,
+			SDKTxCountDelta:               signal.SDKTxCountDelta,
+			SDKTxSuccessfulDelta:          signal.SDKTxSuccessfulDelta,
+			ABCICheckTxSeconds:            signal.ABCICheckTxSeconds,
+			ABCICheckTxCount:              signal.ABCICheckTxCount,
+			ABCIFinalizeBlockSeconds:      signal.ABCIFinalizeBlockSeconds,
+			ABCIFinalizeBlockCount:        signal.ABCIFinalizeBlockCount,
+			ABCICommitSeconds:             signal.ABCICommitSeconds,
+			ABCICommitCount:               signal.ABCICommitCount,
+			ConsensusBlockIntervalSeconds: signal.ConsensusBlockIntervalSeconds,
+			ConsensusBlockIntervalCount:   signal.ConsensusBlockIntervalCount,
+		}
+		if row.ABCICheckTxCount > 0 {
+			row.AvgCheckTxSeconds = row.ABCICheckTxSeconds / float64(row.ABCICheckTxCount)
+		}
+		if row.ABCIFinalizeBlockCount > 0 {
+			row.AvgFinalizeBlockSeconds = row.ABCIFinalizeBlockSeconds / float64(row.ABCIFinalizeBlockCount)
+			row.AvgTxsPerFinalizeBlock = float64(obs.IncludedTransactions) / float64(row.ABCIFinalizeBlockCount)
+		}
+		if row.ABCICommitCount > 0 {
+			row.AvgCommitSeconds = row.ABCICommitSeconds / float64(row.ABCICommitCount)
+			row.AvgTxsPerCommit = float64(obs.IncludedTransactions) / float64(row.ABCICommitCount)
+		}
+		if row.ConsensusBlockIntervalCount > 0 {
+			row.AvgBlockIntervalSeconds = row.ConsensusBlockIntervalSeconds / float64(row.ConsensusBlockIntervalCount)
+			row.AvgTxsPerConsensusBlock = signal.ConsensusTotalTxsDelta / float64(row.ConsensusBlockIntervalCount)
+		}
+		if submitted > obs.IncludedTransactions {
+			row.SubmittedMinusIncluded = submitted - obs.IncludedTransactions
+			row.Notes = append(row.Notes, "submitted transactions exceeded accepted-window included transactions")
+		}
+		if row.ConsensusTotalTxsDelta == 0 && obs.IncludedTransactions > 0 {
+			row.Notes = append(row.Notes, "consensus tx counter was unavailable or did not move")
+		}
+		if row.ConsensusBlockIntervalCount == 0 && row.ABCICommitCount > 0 {
+			row.Notes = append(row.Notes, "consensus block interval histogram was unavailable or did not move")
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 func parseRunnerOverall(line string) *runnerLogOverall {
 	out := &runnerLogOverall{
 		TotalTransactions:         intField(line, "TotalTransactions"),
@@ -3911,6 +4021,13 @@ func nonNegativeInt(value int) int {
 		return 0
 	}
 	return value
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func topLogErrors(counts map[string]int, limit int) []logErrorCount {
@@ -4497,6 +4614,7 @@ func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
 		b.WriteString(mdCell(obs.Error))
 		b.WriteString("\n\n")
 	}
+	writePipelineSignalsMarkdown(b, obs.PipelineSignals)
 
 	rows := metricDeltaRows(obs.MetricDeltas)
 	errors := metricDeltaErrors(obs.MetricDeltas)
@@ -4603,6 +4721,50 @@ func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
 		}
 		b.WriteByte('\n')
 	}
+}
+
+func writePipelineSignalsMarkdown(b *strings.Builder, rows []pipelineSignal) {
+	if len(rows) == 0 {
+		return
+	}
+	b.WriteString("### Accepted-Window Transaction Pipeline Summary\n\n")
+	b.WriteString("This summary promotes node metrics and Catalyst aggregate logs. It does not include per-transaction broadcast or inclusion latency unless Catalyst exports those timings.\n\n")
+	b.WriteString("| Node | Submitted | Included | Successful | Send gap | Blocks | Txs/block | Block interval s | CheckTx avg s | Finalize avg s | Commit avg s |\n")
+	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+	for _, row := range rows {
+		blocks := row.CollectorBlockSpan
+		if blocks == 0 && row.ABCICommitCount > 0 {
+			blocks = uint64(row.ABCICommitCount)
+		}
+		txsPerBlock := row.AvgTxsPerConsensusBlock
+		if txsPerBlock == 0 && blocks > 0 {
+			txsPerBlock = float64(row.IncludedTransactions) / float64(blocks)
+		}
+		b.WriteString("| ")
+		b.WriteString(mdCell(row.Name))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(row.SubmittedTransactions))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(row.IncludedTransactions))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(row.SuccessfulTransactions))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(row.SubmittedMinusIncluded))
+		b.WriteString(" | ")
+		b.WriteString(strconv.FormatUint(blocks, 10))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(txsPerBlock))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.AvgBlockIntervalSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.AvgCheckTxSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.AvgFinalizeBlockSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.AvgCommitSeconds))
+		b.WriteString(" |\n")
+	}
+	b.WriteByte('\n')
 }
 
 func writeProfileArtifactsMarkdown(b *strings.Builder, result runResult) {
@@ -4814,6 +4976,12 @@ func treeDBMetricDeltaSeconds(metric string, delta float64) (float64, bool) {
 
 func treeDBMetricGroup(metric string) string {
 	switch {
+	case strings.Contains(metric, "treedb.public.batch.write_sync"):
+		return "public batch WriteSync"
+	case strings.Contains(metric, "treedb.public.batch.write"):
+		return "public batch Write"
+	case strings.Contains(metric, "treedb.public.checkpoint"):
+		return "public checkpoint"
 	case strings.Contains(metric, "command_wal"):
 		return "command WAL"
 	case strings.Contains(metric, "checkpoint"):
