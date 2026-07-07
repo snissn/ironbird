@@ -40,6 +40,7 @@ import (
 const defaultMnemonic = "copper push brief egg scan entry inform record adjust fossil boss egg comic alien upon aspect dry avoid interest fury window hint race symptom"
 
 const (
+	profileBoundaryActiveWindow       = "active-window"
 	profileBoundaryAcceptedWindow     = "accepted-window"
 	profileBoundaryLoadWindowAdjacent = "load-window-adjacent"
 	profileBoundaryWholeRun           = "whole-run"
@@ -335,30 +336,39 @@ type commitBenchmark struct {
 }
 
 type profileArtifact struct {
-	Name              string     `json:"name"`
-	Kind              string     `json:"kind"`
-	Boundary          string     `json:"timing_boundary,omitempty"`
-	Endpoint          string     `json:"endpoint,omitempty"`
-	RequestedSeconds  float64    `json:"requested_seconds,omitempty"`
-	StartedAt         *time.Time `json:"collection_started_at,omitempty"`
-	FinishedAt        *time.Time `json:"collection_finished_at,omitempty"`
-	CollectionSeconds float64    `json:"collection_seconds,omitempty"`
-	Path              string     `json:"path,omitempty"`
-	TopSummaryPath    string     `json:"top_summary_path,omitempty"`
-	TopSummaryError   string     `json:"top_summary_error,omitempty"`
-	Error             string     `json:"error,omitempty"`
+	Name                                      string     `json:"name"`
+	Kind                                      string     `json:"kind"`
+	Boundary                                  string     `json:"timing_boundary,omitempty"`
+	Endpoint                                  string     `json:"endpoint,omitempty"`
+	RequestedSeconds                          float64    `json:"requested_seconds,omitempty"`
+	StartedAt                                 *time.Time `json:"collection_started_at,omitempty"`
+	FinishedAt                                *time.Time `json:"collection_finished_at,omitempty"`
+	CollectionSeconds                         float64    `json:"collection_seconds,omitempty"`
+	CollectionStartedLoadWindowOffsetSeconds  *float64   `json:"collection_started_load_window_offset_seconds,omitempty"`
+	CollectionFinishedLoadWindowOffsetSeconds *float64   `json:"collection_finished_load_window_offset_seconds,omitempty"`
+	CollectionLoadWindowOverlapSeconds        *float64   `json:"collection_load_window_overlap_seconds,omitempty"`
+	Path                                      string     `json:"path,omitempty"`
+	TopSummaryPath                            string     `json:"top_summary_path,omitempty"`
+	TopSummaryError                           string     `json:"top_summary_error,omitempty"`
+	Error                                     string     `json:"error,omitempty"`
 }
 
 type appProfileCaptureConfig struct {
-	CPUOutDir          string
-	HeapOutDir         string
-	PprofOutDir        string
-	DiagnosticOutDir   string
-	DiagnosticDuration time.Duration
+	CPUOutDir            string
+	HeapOutDir           string
+	PprofOutDir          string
+	DiagnosticOutDir     string
+	DiagnosticDuration   time.Duration
+	ActiveWindowOutDir   string
+	ActiveWindowDuration time.Duration
 }
 
 func (cfg appProfileCaptureConfig) needsPprof() bool {
-	return cfg.HeapOutDir != "" || cfg.PprofOutDir != "" || cfg.DiagnosticOutDir != ""
+	return cfg.HeapOutDir != "" || cfg.PprofOutDir != "" || cfg.DiagnosticOutDir != "" || cfg.ActiveWindowOutDir != ""
+}
+
+func (cfg appProfileCaptureConfig) needsDiagnosticProfileFlags() bool {
+	return cfg.DiagnosticOutDir != "" || cfg.ActiveWindowOutDir != ""
 }
 
 type derivedMetrics struct {
@@ -561,6 +571,8 @@ func main() {
 		appPprofProfileDir          = flag.String("app-pprof-profile-dir", "", "when set, enable validator pprof and copy validator 0 heap, allocs, and goroutine profiles into this directory")
 		appDiagProfileDir           = flag.String("app-diagnostic-profile-dir", "", "when set, enable validator pprof and capture validator 0 app block, mutex, and trace diagnostic profiles into this directory")
 		appDiagProfileDuration      = flag.Duration("app-diagnostic-profile-duration", 5*time.Second, "duration for timed validator app block, mutex, and trace diagnostic pprof captures")
+		appActiveWindowProfileDir   = flag.String("app-active-window-profile-dir", "", "when set, enable validator pprof and capture validator 0 CPU, heap, allocs, goroutine, block, mutex, and trace app profiles while the load test is active")
+		appActiveWindowDuration     = flag.Duration("app-active-window-profile-duration", 5*time.Second, "duration for timed active-window validator app CPU, block, mutex, and trace pprof captures")
 		rawTxAudit                  = flag.Bool("raw-tx-audit", true, "when true, verify non-EVM tx inclusion with post-load CometBFT /tx queries; disable for clean app CPU profiles")
 		loadWindowDrainTimeout      = flag.Duration("load-window-drain-timeout", 0, "optional extra time to keep the chain running after Catalyst exits so app metrics can reach the load-window target")
 		loadWindowMinDuration       = flag.Duration("load-window-min-duration", 0, "minimum app-metric load-window duration required for final throughput evidence; short reached windows are annotated invalid")
@@ -632,12 +644,17 @@ func main() {
 	if *appDiagProfileDir != "" && *appDiagProfileDuration <= 0 {
 		fatalf("-app-diagnostic-profile-duration must be > 0 when -app-diagnostic-profile-dir is set, got %s", *appDiagProfileDuration)
 	}
+	if *appActiveWindowProfileDir != "" && *appActiveWindowDuration <= 0 {
+		fatalf("-app-active-window-profile-duration must be > 0 when -app-active-window-profile-dir is set, got %s", *appActiveWindowDuration)
+	}
 	appProfiles := appProfileCaptureConfig{
-		CPUOutDir:          *appCPUProfileDir,
-		HeapOutDir:         *appHeapProfileDir,
-		PprofOutDir:        *appPprofProfileDir,
-		DiagnosticOutDir:   *appDiagProfileDir,
-		DiagnosticDuration: *appDiagProfileDuration,
+		CPUOutDir:            *appCPUProfileDir,
+		HeapOutDir:           *appHeapProfileDir,
+		PprofOutDir:          *appPprofProfileDir,
+		DiagnosticOutDir:     *appDiagProfileDir,
+		DiagnosticDuration:   *appDiagProfileDuration,
+		ActiveWindowOutDir:   *appActiveWindowProfileDir,
+		ActiveWindowDuration: *appActiveWindowDuration,
 	}
 	preseed := makePreseedConfig(*preseedProfile, *preseedAccounts, *wallets)
 	celestiaConfig := celestiaSyncConfig{
@@ -714,7 +731,7 @@ func main() {
 		if appProfiles.needsPprof() {
 			sc = withAppHeapProfile(sc)
 		}
-		if appProfiles.DiagnosticOutDir != "" {
+		if appProfiles.needsDiagnosticProfileFlags() {
 			sc = withAppDiagnosticProfileFlags(sc)
 		}
 		var result runResult
@@ -1348,6 +1365,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 			return true, fmt.Sprintf("load window reached too quickly: %d successful tx in %.3fs below %.3fs minimum", obs.SuccessfulTransactions, obs.Seconds, obs.MinimumSeconds)
 		}
 	}
+	activeProfileCollector := startAppProfileCollector(ctx, launchResp.ProviderState, launchResp.ChainState, sc, appActiveWindowProfileRequests(sc, appProfiles))
 	endPhase = startPhase(&result, "run_load_test", fmt.Sprintf("wallets=%d", sc.NumWallets))
 	loadResp, err := loadActivity.RunLoadTest(ctx, messages.RunLoadTestRequest{
 		ChainState:      launchResp.ChainState,
@@ -1370,6 +1388,13 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 			obs = windowMonitor.Stop()
 		}
 		result.LoadWindow = &obs
+	}
+	if activeProfileCollector != nil {
+		endPhase = startPhase(&result, "collect_active_window_app_profiles", "")
+		activeArtifacts := activeProfileCollector.Wait()
+		activeArtifacts = annotateProfileArtifactsWithLoadWindowTiming(activeArtifacts, result.LoadWindow)
+		result.ProfileArtifacts = append(result.ProfileArtifacts, activeArtifacts...)
+		endPhase()
 	}
 	if sampler != nil {
 		endPhase = startPhase(&result, "stop_resource_sampler", "")
@@ -2082,12 +2107,82 @@ func collectAppProfileRequests(ctx context.Context, providerState, chainState []
 	for i, req := range requests {
 		switch req.Kind {
 		case "validator_cpu":
-			artifacts[i] = collectAppCPUProfile(ctx, validators[0], sc, req)
+			if req.Endpoint == "" {
+				artifacts[i] = collectAppCPUProfile(ctx, validators[0], sc, req)
+			} else {
+				artifacts[i] = collectAppPprofEndpointProfile(ctx, validators[0], sc, req)
+			}
 		default:
 			artifacts[i] = collectAppPprofEndpointProfile(ctx, validators[0], sc, req)
 		}
 	}
 	return attachPprofTopSummaries(ctx, artifacts)
+}
+
+type appProfileCollector struct {
+	done <-chan []profileArtifact
+}
+
+func startAppProfileCollector(ctx context.Context, providerState, chainState []byte, sc scenario, requests []appProfileRequest) *appProfileCollector {
+	if len(requests) == 0 {
+		return nil
+	}
+	done := make(chan []profileArtifact, 1)
+	go func() {
+		done <- collectAppProfileRequests(ctx, providerState, chainState, sc, requests)
+	}()
+	return &appProfileCollector{done: done}
+}
+
+func (c *appProfileCollector) Wait() []profileArtifact {
+	if c == nil {
+		return nil
+	}
+	return <-c.done
+}
+
+func annotateProfileArtifactsWithLoadWindowTiming(artifacts []profileArtifact, obs *loadWindowObservation) []profileArtifact {
+	if obs == nil || obs.StartedAt.IsZero() {
+		return artifacts
+	}
+	for i := range artifacts {
+		if artifacts[i].StartedAt != nil {
+			seconds := artifacts[i].StartedAt.Sub(obs.StartedAt).Seconds()
+			artifacts[i].CollectionStartedLoadWindowOffsetSeconds = &seconds
+		}
+		if artifacts[i].FinishedAt != nil {
+			seconds := artifacts[i].FinishedAt.Sub(obs.StartedAt).Seconds()
+			artifacts[i].CollectionFinishedLoadWindowOffsetSeconds = &seconds
+		}
+		if artifacts[i].StartedAt != nil && artifacts[i].FinishedAt != nil && !obs.EndedAt.IsZero() {
+			overlap := overlapSeconds(*artifacts[i].StartedAt, *artifacts[i].FinishedAt, obs.StartedAt, obs.EndedAt)
+			artifacts[i].CollectionLoadWindowOverlapSeconds = &overlap
+		}
+	}
+	return artifacts
+}
+
+func overlapSeconds(aStart, aEnd, bStart, bEnd time.Time) float64 {
+	start := maxTime(aStart, bStart)
+	end := minTime(aEnd, bEnd)
+	if !end.After(start) {
+		return 0
+	}
+	return end.Sub(start).Seconds()
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 func splitAppProfileRequestsForRawTxAudit(requests []appProfileRequest) ([]appProfileRequest, []appProfileRequest) {
@@ -2170,8 +2265,44 @@ func appProfileRequests(sc scenario, cfg appProfileCaptureConfig) []appProfileRe
 	return requests
 }
 
+func appActiveWindowProfileRequests(sc scenario, cfg appProfileCaptureConfig) []appProfileRequest {
+	if cfg.ActiveWindowOutDir == "" || sc.AppPprofListen == "" {
+		return nil
+	}
+	var requests []appProfileRequest
+	for _, profile := range []struct {
+		kind     string
+		endpoint string
+		suffix   string
+		ext      string
+		duration time.Duration
+	}{
+		{kind: "validator_cpu", endpoint: timedPprofEndpoint("profile", cfg.ActiveWindowDuration), suffix: "cpu", ext: ".pprof", duration: cfg.ActiveWindowDuration},
+		{kind: "validator_heap", endpoint: "heap?gc=1", suffix: "heap", ext: ".pprof"},
+		{kind: "validator_allocs", endpoint: "allocs", suffix: "allocs", ext: ".pprof"},
+		{kind: "validator_goroutine", endpoint: "goroutine", suffix: "goroutine", ext: ".pprof"},
+		{kind: "validator_block", endpoint: timedPprofEndpoint("block", cfg.ActiveWindowDuration), suffix: "block", ext: ".pprof", duration: cfg.ActiveWindowDuration},
+		{kind: "validator_mutex", endpoint: timedPprofEndpoint("mutex", cfg.ActiveWindowDuration), suffix: "mutex", ext: ".pprof", duration: cfg.ActiveWindowDuration},
+		{kind: "validator_trace", endpoint: timedPprofEndpoint("trace", cfg.ActiveWindowDuration), suffix: "trace", ext: ".out", duration: cfg.ActiveWindowDuration},
+	} {
+		requests = append(requests, appProfileRequest{
+			Kind:     profile.kind,
+			Endpoint: profile.endpoint,
+			FileName: appActiveWindowProfileFileName(sc, profile.suffix, profile.ext),
+			OutDir:   cfg.ActiveWindowOutDir,
+			Boundary: profileBoundaryActiveWindow,
+			Duration: profile.duration,
+		})
+	}
+	return requests
+}
+
 func appPprofFileName(sc scenario, suffix string) string {
 	return appProfileFileName(sc, suffix, ".pprof")
+}
+
+func appActiveWindowProfileFileName(sc scenario, suffix, ext string) string {
+	return appProfileFileName(sc, "active-window-"+suffix, ext)
 }
 
 func appProfileFileName(sc scenario, suffix, ext string) string {
@@ -2306,11 +2437,11 @@ func failProfileArtifacts(artifacts []profileArtifact, message string) []profile
 func collectAppPprofEndpointProfile(ctx context.Context, validator interface {
 	RunCommand(context.Context, []string) (string, string, int, error)
 	ReadFile(context.Context, string) ([]byte, error)
-}, sc scenario, req appProfileRequest) profileArtifact {
-	artifact := req.artifact(sc.Name)
+}, sc scenario, req appProfileRequest) (artifact profileArtifact) {
+	artifact = req.artifact(sc.Name)
 	if err := os.MkdirAll(req.OutDir, 0o755); err != nil {
 		artifact.Error = fmt.Sprintf("create profile dir: %v", err)
-		return artifact
+		return
 	}
 	startProfileArtifactCollection(&artifact)
 	defer finishProfileArtifactCollection(&artifact)
@@ -2326,53 +2457,53 @@ func collectAppPprofEndpointProfile(ctx context.Context, validator interface {
 	cancel()
 	if err != nil {
 		artifact.Error = fmt.Sprintf("fetch %s profile: %v stdout=%q stderr=%q", req.Kind, err, trimLog(stdout, 2000), trimLog(stderr, 2000))
-		return artifact
+		return
 	}
 	if code != 0 {
 		artifact.Error = fmt.Sprintf("fetch %s profile exit %d stdout=%q stderr=%q", req.Kind, code, trimLog(stdout, 2000), trimLog(stderr, 2000))
-		return artifact
+		return
 	}
 	body, err := validator.ReadFile(ctx, req.FileName)
 	if err != nil {
 		artifact.Error = fmt.Sprintf("read %s profile: %v", req.Kind, err)
-		return artifact
+		return
 	}
 	localPath := filepath.Join(req.OutDir, req.FileName)
 	if err := os.WriteFile(localPath, body, 0o644); err != nil {
 		artifact.Error = fmt.Sprintf("write %s profile: %v", req.Kind, err)
-		return artifact
+		return
 	}
 	artifact.Path = localPath
-	return artifact
+	return
 }
 
 func collectAppCPUProfile(ctx context.Context, validator interface {
 	Stop(context.Context) error
 	ReadFile(context.Context, string) ([]byte, error)
-}, sc scenario, req appProfileRequest) profileArtifact {
-	artifact := req.artifact(sc.Name)
+}, sc scenario, req appProfileRequest) (artifact profileArtifact) {
+	artifact = req.artifact(sc.Name)
 	if err := os.MkdirAll(req.OutDir, 0o755); err != nil {
 		artifact.Error = fmt.Sprintf("create profile dir: %v", err)
-		return artifact
+		return
 	}
 	startProfileArtifactCollection(&artifact)
 	defer finishProfileArtifactCollection(&artifact)
 	if err := validator.Stop(ctx); err != nil {
 		artifact.Error = fmt.Sprintf("stop validator: %v", err)
-		return artifact
+		return
 	}
 	body, err := validator.ReadFile(ctx, req.FileName)
 	if err != nil {
 		artifact.Error = fmt.Sprintf("read validator profile: %v", err)
-		return artifact
+		return
 	}
 	localPath := filepath.Join(req.OutDir, req.FileName)
 	if err := os.WriteFile(localPath, body, 0o644); err != nil {
 		artifact.Error = fmt.Sprintf("write validator profile: %v", err)
-		return artifact
+		return
 	}
 	artifact.Path = localPath
-	return artifact
+	return
 }
 
 func attachPprofTopSummaries(ctx context.Context, artifacts []profileArtifact) []profileArtifact {
@@ -4049,8 +4180,8 @@ func writeProfileArtifactsMarkdown(b *strings.Builder, result runResult) {
 	b.WriteString("## ")
 	b.WriteString(mdCell(result.Scenario.Name))
 	b.WriteString(" Profile Manifest\n\n")
-	b.WriteString("| Kind | Timing boundary | Endpoint | Requested s | Collected s | Profile path | Top summary | Status |\n")
-	b.WriteString("| --- | --- | --- | ---: | ---: | --- | --- | --- |\n")
+	b.WriteString("| Kind | Timing boundary | Endpoint | Requested s | Started | Finished | Collected s | Load-window start s | Load-window end s | Load-window overlap s | Profile path | Top summary | Status |\n")
+	b.WriteString("| --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |\n")
 	for _, artifact := range result.ProfileArtifacts {
 		status := "ok"
 		if artifact.Error != "" {
@@ -4067,7 +4198,17 @@ func writeProfileArtifactsMarkdown(b *strings.Builder, result runResult) {
 		b.WriteString(" | ")
 		b.WriteString(optionalProfileSeconds(artifact.RequestedSeconds))
 		b.WriteString(" | ")
+		b.WriteString(mdCell(optionalProfileTime(artifact.StartedAt)))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(optionalProfileTime(artifact.FinishedAt)))
+		b.WriteString(" | ")
 		b.WriteString(optionalProfileSeconds(artifact.CollectionSeconds))
+		b.WriteString(" | ")
+		b.WriteString(optionalProfileFloat(artifact.CollectionStartedLoadWindowOffsetSeconds))
+		b.WriteString(" | ")
+		b.WriteString(optionalProfileFloat(artifact.CollectionFinishedLoadWindowOffsetSeconds))
+		b.WriteString(" | ")
+		b.WriteString(optionalProfileFloat(artifact.CollectionLoadWindowOverlapSeconds))
 		b.WriteString(" | ")
 		b.WriteString(mdCell(artifact.Path))
 		b.WriteString(" | ")
@@ -4079,11 +4220,25 @@ func writeProfileArtifactsMarkdown(b *strings.Builder, result runResult) {
 	b.WriteByte('\n')
 }
 
+func optionalProfileTime(value *time.Time) string {
+	if value == nil || value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
+}
+
 func optionalProfileSeconds(seconds float64) string {
 	if seconds <= 0 {
 		return ""
 	}
 	return metricFloat(seconds)
+}
+
+func optionalProfileFloat(value *float64) string {
+	if value == nil {
+		return ""
+	}
+	return metricFloat(*value)
 }
 
 type metricDeltaRow struct {
