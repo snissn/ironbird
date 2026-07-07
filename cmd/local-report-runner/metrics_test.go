@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -342,11 +343,14 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 			},
 			ProfileArtifacts: []profileArtifact{
 				{
-					Name:           "plain-send",
-					Kind:           "validator_block",
-					Boundary:       profileBoundaryWholeRun,
-					Path:           "/tmp/plain-send-block.pprof",
-					TopSummaryPath: "/tmp/plain-send-block.pprof.top.txt",
+					Name:              "plain-send",
+					Kind:              "validator_block",
+					Boundary:          profileBoundaryWholeRun,
+					Endpoint:          "block?seconds=5",
+					RequestedSeconds:  5,
+					CollectionSeconds: 5.25,
+					Path:              "/tmp/plain-send-block.pprof",
+					TopSummaryPath:    "/tmp/plain-send-block.pprof.top.txt",
 				},
 				{
 					Name:     "plain-send",
@@ -367,6 +371,8 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 		"## plain-send Profile Manifest",
 		"validator_block",
 		profileBoundaryWholeRun,
+		"block?seconds=5",
+		"5.25",
 		"/tmp/plain-send-block.pprof.top.txt",
 		"fetch validator_mutex profile exit 1",
 	} {
@@ -413,11 +419,11 @@ func TestRenderReportMarkdownIncludesMetricScrapeErrorsWithoutDeltas(t *testing.
 
 func TestAppProfileRequestsKeepsExtendedPprofOptIn(t *testing.T) {
 	sc := withAppHeapProfile(scenario{Name: "plain-send", BaseImage: "simapp"})
-	if got := appProfileRequests(sc, "", "", ""); len(got) != 0 {
+	if got := appProfileRequests(sc, appProfileCaptureConfig{}); len(got) != 0 {
 		t.Fatalf("profile requests without dirs len = %d, want 0", len(got))
 	}
 
-	requests := appProfileRequests(sc, "", "", "/tmp/profiles")
+	requests := appProfileRequests(sc, appProfileCaptureConfig{PprofOutDir: "/tmp/profiles"})
 	var kinds []string
 	for _, req := range requests {
 		kinds = append(kinds, req.Kind+":"+req.Boundary)
@@ -432,9 +438,59 @@ func TestAppProfileRequestsKeepsExtendedPprofOptIn(t *testing.T) {
 	}
 }
 
+func TestAppProfileRequestsAddsDiagnosticProfilesOptIn(t *testing.T) {
+	sc := withAppHeapProfile(scenario{Name: "plain-send", BaseImage: "simapp"})
+	requests := appProfileRequests(sc, appProfileCaptureConfig{
+		DiagnosticOutDir:   "/tmp/diagnostics",
+		DiagnosticDuration: 1500 * time.Millisecond,
+	})
+
+	var got []string
+	for _, req := range requests {
+		got = append(got, strings.Join([]string{
+			req.Kind,
+			req.Endpoint,
+			req.FileName,
+			req.OutDir,
+			req.Boundary,
+			req.Duration.String(),
+		}, "|"))
+	}
+	want := []string{
+		"validator_block|block?seconds=2|plain-send-validator-0-block.pprof|/tmp/diagnostics|" + profileBoundaryLoadWindowAdjacent + "|1.5s",
+		"validator_mutex|mutex?seconds=2|plain-send-validator-0-mutex.pprof|/tmp/diagnostics|" + profileBoundaryLoadWindowAdjacent + "|1.5s",
+		"validator_trace|trace?seconds=2|plain-send-validator-0-trace.out|/tmp/diagnostics|" + profileBoundaryLoadWindowAdjacent + "|1.5s",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("diagnostic profile requests = %v, want %v", got, want)
+	}
+}
+
+func TestWithAppDiagnosticProfileFlagsEnablesBlockAndMutexSampling(t *testing.T) {
+	originalFlags := []string{"--existing", "value"}
+	sc := withAppDiagnosticProfileFlags(scenario{
+		Name:            "plain-send",
+		BaseImage:       "simapp",
+		AdditionalFlags: originalFlags,
+	})
+	got := strings.Join(sc.AdditionalFlags, " ")
+	want := "--existing value --block-profile-rate 1 --mutex-profile-fraction 1"
+	if got != want {
+		t.Fatalf("additional flags = %q, want %q", got, want)
+	}
+	if strings.Join(originalFlags, " ") != "--existing value" {
+		t.Fatalf("mutated original flags: %+v", originalFlags)
+	}
+
+	nonSimapp := withAppDiagnosticProfileFlags(scenario{Name: "evm", BaseImage: "evm"})
+	if len(nonSimapp.AdditionalFlags) != 0 {
+		t.Fatalf("non-simapp flags = %+v, want empty", nonSimapp.AdditionalFlags)
+	}
+}
+
 func TestSplitAppProfileRequestsForRawTxAuditKeepsCPUAfterAudit(t *testing.T) {
 	sc := withAppCPUProfile(withAppHeapProfile(scenario{Name: "plain-send", BaseImage: "simapp"}))
-	requests := appProfileRequests(sc, "/tmp/cpu", "/tmp/profiles", "/tmp/profiles")
+	requests := appProfileRequests(sc, appProfileCaptureConfig{CPUOutDir: "/tmp/cpu", HeapOutDir: "/tmp/profiles", PprofOutDir: "/tmp/profiles"})
 	preAudit, postAudit := splitAppProfileRequestsForRawTxAudit(requests)
 
 	for _, req := range preAudit {
@@ -452,6 +508,19 @@ func TestSplitAppProfileRequestsForRawTxAuditKeepsCPUAfterAudit(t *testing.T) {
 	}
 	if len(postAudit) != 1 || postAudit[0].Kind != "validator_cpu" {
 		t.Fatalf("post-audit requests = %+v, want only validator_cpu", postAudit)
+	}
+}
+
+func TestAttachPprofTopSummariesSkipsTrace(t *testing.T) {
+	artifacts := attachPprofTopSummaries(context.Background(), []profileArtifact{{
+		Kind: "validator_trace",
+		Path: filepath.Join(t.TempDir(), "trace.out"),
+	}})
+	if len(artifacts) != 1 {
+		t.Fatalf("artifacts len = %d, want 1", len(artifacts))
+	}
+	if artifacts[0].TopSummaryPath != "" || artifacts[0].TopSummaryError != "" {
+		t.Fatalf("trace artifact got top summary fields: %+v", artifacts[0])
 	}
 }
 
