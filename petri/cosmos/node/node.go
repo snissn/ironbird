@@ -66,7 +66,6 @@ func CreateNode(ctx context.Context, logger *zap.Logger, infraProvider provider.
 	if len(chainConfig.Entrypoint) > 0 {
 		entrypoint = chainConfig.Entrypoint
 	}
-
 	def := provider.TaskDefinition{
 		Name:  nodeConfig.Name,
 		Image: chainConfig.Image,

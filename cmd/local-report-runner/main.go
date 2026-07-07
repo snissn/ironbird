@@ -335,13 +335,30 @@ type commitBenchmark struct {
 }
 
 type profileArtifact struct {
-	Name            string `json:"name"`
-	Kind            string `json:"kind"`
-	Boundary        string `json:"timing_boundary,omitempty"`
-	Path            string `json:"path,omitempty"`
-	TopSummaryPath  string `json:"top_summary_path,omitempty"`
-	TopSummaryError string `json:"top_summary_error,omitempty"`
-	Error           string `json:"error,omitempty"`
+	Name              string     `json:"name"`
+	Kind              string     `json:"kind"`
+	Boundary          string     `json:"timing_boundary,omitempty"`
+	Endpoint          string     `json:"endpoint,omitempty"`
+	RequestedSeconds  float64    `json:"requested_seconds,omitempty"`
+	StartedAt         *time.Time `json:"collection_started_at,omitempty"`
+	FinishedAt        *time.Time `json:"collection_finished_at,omitempty"`
+	CollectionSeconds float64    `json:"collection_seconds,omitempty"`
+	Path              string     `json:"path,omitempty"`
+	TopSummaryPath    string     `json:"top_summary_path,omitempty"`
+	TopSummaryError   string     `json:"top_summary_error,omitempty"`
+	Error             string     `json:"error,omitempty"`
+}
+
+type appProfileCaptureConfig struct {
+	CPUOutDir          string
+	HeapOutDir         string
+	PprofOutDir        string
+	DiagnosticOutDir   string
+	DiagnosticDuration time.Duration
+}
+
+func (cfg appProfileCaptureConfig) needsPprof() bool {
+	return cfg.HeapOutDir != "" || cfg.PprofOutDir != "" || cfg.DiagnosticOutDir != ""
 }
 
 type derivedMetrics struct {
@@ -542,6 +559,8 @@ func main() {
 		appCPUProfileDir            = flag.String("app-cpuprofile-dir", "", "when set, pass --cpu-profile to app validators and copy validator 0 CPU profiles into this directory")
 		appHeapProfileDir           = flag.String("app-heapprofile-dir", "", "when set, enable validator pprof and copy validator 0 heap profiles into this directory")
 		appPprofProfileDir          = flag.String("app-pprof-profile-dir", "", "when set, enable validator pprof and copy validator 0 heap, allocs, and goroutine profiles into this directory")
+		appDiagProfileDir           = flag.String("app-diagnostic-profile-dir", "", "when set, enable validator pprof and capture validator 0 app block, mutex, and trace diagnostic profiles into this directory")
+		appDiagProfileDuration      = flag.Duration("app-diagnostic-profile-duration", 5*time.Second, "duration for timed validator app block, mutex, and trace diagnostic pprof captures")
 		rawTxAudit                  = flag.Bool("raw-tx-audit", true, "when true, verify non-EVM tx inclusion with post-load CometBFT /tx queries; disable for clean app CPU profiles")
 		loadWindowDrainTimeout      = flag.Duration("load-window-drain-timeout", 0, "optional extra time to keep the chain running after Catalyst exits so app metrics can reach the load-window target")
 		loadWindowMinDuration       = flag.Duration("load-window-min-duration", 0, "minimum app-metric load-window duration required for final throughput evidence; short reached windows are annotated invalid")
@@ -609,6 +628,16 @@ func main() {
 	flag.Parse()
 	if *loadWindowTargetFraction <= 0 || *loadWindowTargetFraction > 1 {
 		fatalf("-load-window-target-fraction must be > 0 and <= 1, got %v", *loadWindowTargetFraction)
+	}
+	if *appDiagProfileDir != "" && *appDiagProfileDuration <= 0 {
+		fatalf("-app-diagnostic-profile-duration must be > 0 when -app-diagnostic-profile-dir is set, got %s", *appDiagProfileDuration)
+	}
+	appProfiles := appProfileCaptureConfig{
+		CPUOutDir:          *appCPUProfileDir,
+		HeapOutDir:         *appHeapProfileDir,
+		PprofOutDir:        *appPprofProfileDir,
+		DiagnosticOutDir:   *appDiagProfileDir,
+		DiagnosticDuration: *appDiagProfileDuration,
 	}
 	preseed := makePreseedConfig(*preseedProfile, *preseedAccounts, *wallets)
 	celestiaConfig := celestiaSyncConfig{
@@ -679,17 +708,20 @@ func main() {
 	}
 
 	for _, sc := range selectedScenarios {
-		if *appCPUProfileDir != "" {
+		if appProfiles.CPUOutDir != "" {
 			sc = withAppCPUProfile(sc)
 		}
-		if *appHeapProfileDir != "" || *appPprofProfileDir != "" {
+		if appProfiles.needsPprof() {
 			sc = withAppHeapProfile(sc)
+		}
+		if appProfiles.DiagnosticOutDir != "" {
+			sc = withAppDiagnosticProfileFlags(sc)
 		}
 		var result runResult
 		if sc.Runner == "celestia-sync-ab" {
 			result = runCelestiaSyncScenario(ctx, sc)
 		} else {
-			result = runScenario(ctx, workerConfig, sc, *skipBuild, *keepTestnets, *commitBenchBlocks, *appCPUProfileDir, *appHeapProfileDir, *appPprofProfileDir, *rawTxAudit, *loadWindowDrainTimeout, *loadWindowMinDuration, *loadWindowTargetFraction, *stopCatalystAfterLoadWindow)
+			result = runScenario(ctx, workerConfig, sc, *skipBuild, *keepTestnets, *commitBenchBlocks, appProfiles, *rawTxAudit, *loadWindowDrainTimeout, *loadWindowMinDuration, *loadWindowTargetFraction, *stopCatalystAfterLoadWindow)
 		}
 		artifact.Results = append(artifact.Results, result)
 		if result.Error != "" {
@@ -813,6 +845,17 @@ func withAppHeapProfile(sc scenario) scenario {
 	sc.AppHeapProfile = name
 	sc.AppPprofListen = "localhost:6060"
 	sc.CustomConfig = withRPCPprofListen(sc.CustomConfig, sc.AppPprofListen)
+	return sc
+}
+
+func withAppDiagnosticProfileFlags(sc scenario) scenario {
+	if sc.BaseImage != "simapp" {
+		return sc
+	}
+	sc.AdditionalFlags = append(sc.AdditionalFlags,
+		"--block-profile-rate", "1",
+		"--mutex-profile-fraction", "1",
+	)
 	return sc
 }
 
@@ -1078,7 +1121,7 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend string, incl
 		Description:     desc,
 		Repo:            "cosmos-sdk",
 		ChainSource:     "https://github.com/snissn/celestia-cosmos-sdk",
-		ChainRef:        "28e5525fefe7aaa53d4726ef7a367242bacf9003",
+		ChainRef:        "494824795d0b9eabf318aba755ee3320462df7ad",
 		Dockerfile:      "hack/simapp.Dockerfile",
 		ReplaceCmd:      simappReplaceCmd(includeCometDB),
 		BaseImage:       "simapp",
@@ -1111,9 +1154,9 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend string, incl
 
 func simappImageTag(includeCometDB bool) string {
 	if includeCometDB {
-		return "ironbird-report:snissn-sdk-28e5525f-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-1d9e976"
+		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-1d9e976"
 	}
-	return "ironbird-report:snissn-sdk-28e5525f-cosmosdb-6ddcb75-gomap-1d9e976"
+	return "ironbird-report:snissn-sdk-4948247-cosmosdb-6ddcb75-gomap-1d9e976"
 }
 
 func celestiaSyncScenario(cfg celestiaSyncConfig) scenario {
@@ -1137,7 +1180,7 @@ func launchGenesisAccounts(sc scenario) int {
 	return sc.NumWallets
 }
 
-func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appCPUProfileDir, appHeapProfileDir, appPprofProfileDir string, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration, loadWindowTargetFraction float64, stopCatalystAfterLoadWindow bool) (result runResult) {
+func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appProfiles appProfileCaptureConfig, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration, loadWindowTargetFraction float64, stopCatalystAfterLoadWindow bool) (result runResult) {
 	result.Scenario = sc
 	result.StartedAt = time.Now()
 	result.ProviderName = fmt.Sprintf("ib%s%s", shortChainName(sc.Name), strings.ToLower(coreutil.RandomString(4)))
@@ -1279,7 +1322,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 		result.StorageSignals = summarizeStorageSignals(result.MetricsBefore, result.MetricsAfter, result.DataSizesBefore, result.DataSizesAfter)
 		result.CommitBenchmark = bench
 		endPhase = startPhase(&result, "collect_app_cpu_profile", "")
-		result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfiles(ctx, launchResp.ProviderState, launchResp.ChainState, sc, appCPUProfileDir, appHeapProfileDir, appPprofProfileDir)...)
+		result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfiles(ctx, launchResp.ProviderState, launchResp.ChainState, sc, appProfiles)...)
 		endPhase()
 		if benchErr != nil {
 			result.Error = fmt.Sprintf("run commit benchmark: %v", benchErr)
@@ -1347,7 +1390,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	result.LoadTestLogs = trimLog(loadResp.TaskLogs, 40000)
 	result.LoadTestStopped = loadResp.StoppedReason
 	result.LoadTestLogSummary = summarizeLoadTestLogs(loadResp.TaskLogs)
-	preAuditProfileRequests, postAuditProfileRequests := splitAppProfileRequestsForRawTxAudit(appProfileRequests(sc, appCPUProfileDir, appHeapProfileDir, appPprofProfileDir))
+	preAuditProfileRequests, postAuditProfileRequests := splitAppProfileRequestsForRawTxAudit(appProfileRequests(sc, appProfiles))
 	endPhase = startPhase(&result, "collect_app_profiles", "")
 	result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfileRequests(ctx, launchResp.ProviderState, launchResp.ChainState, sc, preAuditProfileRequests)...)
 	endPhase()
@@ -1984,18 +2027,21 @@ type appProfileRequest struct {
 	FileName string
 	OutDir   string
 	Boundary string
+	Duration time.Duration
 }
 
 func (req appProfileRequest) artifact(scenarioName string) profileArtifact {
 	return profileArtifact{
-		Name:     scenarioName,
-		Kind:     req.Kind,
-		Boundary: req.Boundary,
+		Name:             scenarioName,
+		Kind:             req.Kind,
+		Boundary:         req.Boundary,
+		Endpoint:         req.Endpoint,
+		RequestedSeconds: durationSeconds(req.Duration),
 	}
 }
 
-func collectAppProfiles(ctx context.Context, providerState, chainState []byte, sc scenario, cpuOutDir, heapOutDir, pprofOutDir string) []profileArtifact {
-	requests := appProfileRequests(sc, cpuOutDir, heapOutDir, pprofOutDir)
+func collectAppProfiles(ctx context.Context, providerState, chainState []byte, sc scenario, cfg appProfileCaptureConfig) []profileArtifact {
+	requests := appProfileRequests(sc, cfg)
 	return collectAppProfileRequests(ctx, providerState, chainState, sc, requests)
 }
 
@@ -2057,18 +2103,18 @@ func splitAppProfileRequestsForRawTxAudit(requests []appProfileRequest) ([]appPr
 	return preAudit, postAudit
 }
 
-func appProfileRequests(sc scenario, cpuOutDir, heapOutDir, pprofOutDir string) []appProfileRequest {
+func appProfileRequests(sc scenario, cfg appProfileCaptureConfig) []appProfileRequest {
 	var requests []appProfileRequest
-	if heapOutDir != "" && sc.AppHeapProfile != "" {
+	if cfg.HeapOutDir != "" && sc.AppHeapProfile != "" {
 		requests = append(requests, appProfileRequest{
 			Kind:     "validator_heap",
 			Endpoint: "heap?gc=1",
 			FileName: sc.AppHeapProfile,
-			OutDir:   heapOutDir,
+			OutDir:   cfg.HeapOutDir,
 			Boundary: profileBoundaryLoadWindowAdjacent,
 		})
 	}
-	if pprofOutDir != "" && sc.AppPprofListen != "" {
+	if cfg.PprofOutDir != "" && sc.AppPprofListen != "" {
 		for _, profile := range []struct {
 			kind     string
 			endpoint string
@@ -2080,23 +2126,44 @@ func appProfileRequests(sc scenario, cpuOutDir, heapOutDir, pprofOutDir string) 
 			{kind: "validator_goroutine", endpoint: "goroutine", suffix: "goroutine", boundary: profileBoundaryLoadWindowAdjacent},
 		} {
 			fileName := appPprofFileName(sc, profile.suffix)
-			if profile.kind == "validator_heap" && heapOutDir == pprofOutDir && fileName == sc.AppHeapProfile {
+			if profile.kind == "validator_heap" && cfg.HeapOutDir == cfg.PprofOutDir && fileName == sc.AppHeapProfile {
 				continue
 			}
 			requests = append(requests, appProfileRequest{
 				Kind:     profile.kind,
 				Endpoint: profile.endpoint,
 				FileName: fileName,
-				OutDir:   pprofOutDir,
+				OutDir:   cfg.PprofOutDir,
 				Boundary: profile.boundary,
 			})
 		}
 	}
-	if cpuOutDir != "" && sc.AppCPUProfile != "" {
+	if cfg.DiagnosticOutDir != "" && sc.AppPprofListen != "" {
+		for _, profile := range []struct {
+			kind     string
+			endpoint string
+			suffix   string
+			ext      string
+		}{
+			{kind: "validator_block", endpoint: timedPprofEndpoint("block", cfg.DiagnosticDuration), suffix: "block", ext: ".pprof"},
+			{kind: "validator_mutex", endpoint: timedPprofEndpoint("mutex", cfg.DiagnosticDuration), suffix: "mutex", ext: ".pprof"},
+			{kind: "validator_trace", endpoint: timedPprofEndpoint("trace", cfg.DiagnosticDuration), suffix: "trace", ext: ".out"},
+		} {
+			requests = append(requests, appProfileRequest{
+				Kind:     profile.kind,
+				Endpoint: profile.endpoint,
+				FileName: appProfileFileName(sc, profile.suffix, profile.ext),
+				OutDir:   cfg.DiagnosticOutDir,
+				Boundary: profileBoundaryLoadWindowAdjacent,
+				Duration: cfg.DiagnosticDuration,
+			})
+		}
+	}
+	if cfg.CPUOutDir != "" && sc.AppCPUProfile != "" {
 		requests = append(requests, appProfileRequest{
 			Kind:     "validator_cpu",
 			FileName: sc.AppCPUProfile,
-			OutDir:   cpuOutDir,
+			OutDir:   cfg.CPUOutDir,
 			Boundary: profileBoundaryWholeRun,
 		})
 	}
@@ -2104,7 +2171,26 @@ func appProfileRequests(sc scenario, cpuOutDir, heapOutDir, pprofOutDir string) 
 }
 
 func appPprofFileName(sc scenario, suffix string) string {
-	return fmt.Sprintf("%s-validator-0-%s.pprof", sanitize(sc.Name), suffix)
+	return appProfileFileName(sc, suffix, ".pprof")
+}
+
+func appProfileFileName(sc scenario, suffix, ext string) string {
+	return fmt.Sprintf("%s-validator-0-%s%s", sanitize(sc.Name), suffix, ext)
+}
+
+func timedPprofEndpoint(profile string, duration time.Duration) string {
+	seconds := int(math.Ceil(duration.Seconds()))
+	if seconds < 1 {
+		seconds = 1
+	}
+	return fmt.Sprintf("%s?seconds=%d", profile, seconds)
+}
+
+func durationSeconds(duration time.Duration) float64 {
+	if duration <= 0 {
+		return 0
+	}
+	return duration.Seconds()
 }
 
 type validatorConfigReader interface {
@@ -2226,6 +2312,8 @@ func collectAppPprofEndpointProfile(ctx context.Context, validator interface {
 		artifact.Error = fmt.Sprintf("create profile dir: %v", err)
 		return artifact
 	}
+	startProfileArtifactCollection(&artifact)
+	defer finishProfileArtifactCollection(&artifact)
 	remotePath := filepath.Join("/simd", req.FileName)
 	endpointURL := "http://127.0.0.1:6060/debug/pprof/" + req.Endpoint
 	cmd := []string{
@@ -2233,7 +2321,7 @@ func collectAppPprofEndpointProfile(ctx context.Context, validator interface {
 		"-c",
 		fmt.Sprintf("wget -q -O %s %s", shellQuote(remotePath), shellQuote(endpointURL)),
 	}
-	profileCtx, cancel := context.WithTimeout(ctx, profileCommandTimeout)
+	profileCtx, cancel := context.WithTimeout(ctx, appProfileRequestTimeout(req))
 	stdout, stderr, code, err := validator.RunCommand(profileCtx, cmd)
 	cancel()
 	if err != nil {
@@ -2267,6 +2355,8 @@ func collectAppCPUProfile(ctx context.Context, validator interface {
 		artifact.Error = fmt.Sprintf("create profile dir: %v", err)
 		return artifact
 	}
+	startProfileArtifactCollection(&artifact)
+	defer finishProfileArtifactCollection(&artifact)
 	if err := validator.Stop(ctx); err != nil {
 		artifact.Error = fmt.Sprintf("stop validator: %v", err)
 		return artifact
@@ -2290,6 +2380,9 @@ func attachPprofTopSummaries(ctx context.Context, artifacts []profileArtifact) [
 		if artifacts[i].Path == "" || artifacts[i].Error != "" {
 			continue
 		}
+		if !profileSupportsPprofTop(artifacts[i].Kind) {
+			continue
+		}
 		summaryPath := artifacts[i].Path + ".top.txt"
 		summaryCtx, cancel := context.WithTimeout(ctx, profileCommandTimeout)
 		out, err := exec.CommandContext(summaryCtx, "go", "tool", "pprof", "-top", artifacts[i].Path).CombinedOutput()
@@ -2305,6 +2398,34 @@ func attachPprofTopSummaries(ctx context.Context, artifacts []profileArtifact) [
 		artifacts[i].TopSummaryPath = summaryPath
 	}
 	return artifacts
+}
+
+func startProfileArtifactCollection(artifact *profileArtifact) {
+	startedAt := time.Now()
+	artifact.StartedAt = &startedAt
+}
+
+func finishProfileArtifactCollection(artifact *profileArtifact) {
+	finishedAt := time.Now()
+	artifact.FinishedAt = &finishedAt
+	if artifact.StartedAt != nil {
+		artifact.CollectionSeconds = finishedAt.Sub(*artifact.StartedAt).Seconds()
+	}
+}
+
+func appProfileRequestTimeout(req appProfileRequest) time.Duration {
+	if req.Duration <= 0 {
+		return profileCommandTimeout
+	}
+	timeout := req.Duration + 10*time.Second
+	if timeout < profileCommandTimeout {
+		return profileCommandTimeout
+	}
+	return timeout
+}
+
+func profileSupportsPprofTop(kind string) bool {
+	return kind != "validator_trace"
 }
 
 func runCommitBenchmark(ctx context.Context, providerState, chainState []byte, sc scenario, blocks uint64) (*commitBenchmark, error) {
@@ -3928,8 +4049,8 @@ func writeProfileArtifactsMarkdown(b *strings.Builder, result runResult) {
 	b.WriteString("## ")
 	b.WriteString(mdCell(result.Scenario.Name))
 	b.WriteString(" Profile Manifest\n\n")
-	b.WriteString("| Kind | Timing boundary | Profile path | Top summary | Status |\n")
-	b.WriteString("| --- | --- | --- | --- | --- |\n")
+	b.WriteString("| Kind | Timing boundary | Endpoint | Requested s | Collected s | Profile path | Top summary | Status |\n")
+	b.WriteString("| --- | --- | --- | ---: | ---: | --- | --- | --- |\n")
 	for _, artifact := range result.ProfileArtifacts {
 		status := "ok"
 		if artifact.Error != "" {
@@ -3942,6 +4063,12 @@ func writeProfileArtifactsMarkdown(b *strings.Builder, result runResult) {
 		b.WriteString(" | ")
 		b.WriteString(mdCell(artifact.Boundary))
 		b.WriteString(" | ")
+		b.WriteString(mdCell(artifact.Endpoint))
+		b.WriteString(" | ")
+		b.WriteString(optionalProfileSeconds(artifact.RequestedSeconds))
+		b.WriteString(" | ")
+		b.WriteString(optionalProfileSeconds(artifact.CollectionSeconds))
+		b.WriteString(" | ")
 		b.WriteString(mdCell(artifact.Path))
 		b.WriteString(" | ")
 		b.WriteString(mdCell(artifact.TopSummaryPath))
@@ -3950,6 +4077,13 @@ func writeProfileArtifactsMarkdown(b *strings.Builder, result runResult) {
 		b.WriteString(" |\n")
 	}
 	b.WriteByte('\n')
+}
+
+func optionalProfileSeconds(seconds float64) string {
+	if seconds <= 0 {
+		return ""
+	}
+	return metricFloat(seconds)
 }
 
 type metricDeltaRow struct {
