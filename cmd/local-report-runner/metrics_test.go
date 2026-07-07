@@ -431,6 +431,136 @@ func TestRenderReportMarkdownIncludesMetricScrapeErrorsWithoutDeltas(t *testing.
 	}
 }
 
+func TestParseTreeDBDebugVarsExtractsInstanceCounters(t *testing.T) {
+	raw := []byte(`{
+		"cmdline": ["simd"],
+		"treedb": {
+			"treedb.expvar.instances_count": 1,
+			"instances": {
+				"/simd/data/application.db#0x123": {
+					"treedb.expvar.wal_dir": "/simd/data/application.db/wal",
+					"treedb.expvar.is_current": true,
+					"treedb.command_wal.writer.sync_ns_total": 2500000000,
+					"treedb.cache.checkpoint.total_ms": 1250,
+					"treedb.process.identity.wal_dir": "/simd/data/application.db/wal",
+					"treedb.process.memory.pool_pressure_level": "nominal"
+				}
+			}
+		}
+	}`)
+	snapshots, err := parseTreeDBDebugVars("validator-0", "http://127.0.0.1:6060/debug/vars", raw)
+	if err != nil {
+		t.Fatalf("parse debug vars: %v", err)
+	}
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshot len = %d, want 1", len(snapshots))
+	}
+	got := snapshots[0]
+	if got.Name != "validator-0" || got.Store != "application.db" || got.WALDir != "/simd/data/application.db/wal" {
+		t.Fatalf("snapshot identity = %+v", got)
+	}
+	if got.Metrics["treedb.command_wal.writer.sync_ns_total"] != 2500000000 {
+		t.Fatalf("sync ns metric = %v", got.Metrics["treedb.command_wal.writer.sync_ns_total"])
+	}
+	if got.Metrics["treedb.cache.checkpoint.total_ms"] != 1250 {
+		t.Fatalf("checkpoint ms metric = %v", got.Metrics["treedb.cache.checkpoint.total_ms"])
+	}
+	if _, ok := got.Metrics["treedb.process.memory.pool_pressure_level"]; ok {
+		t.Fatalf("string status value was included as numeric metric")
+	}
+}
+
+func TestTreeDBStatsDeltasAndTimingSummary(t *testing.T) {
+	before := []treeDBStatsSnapshot{{
+		Name:     "validator-0",
+		Instance: "app#1",
+		Store:    "application.db",
+		WALDir:   "/simd/data/application.db/wal",
+		Metrics: map[string]float64{
+			"treedb.command_wal.writer.sync_ns_total": 1_000_000_000,
+			"treedb.cache.checkpoint.total_ms":        500,
+			"treedb.process.memory.heap_inuse_bytes":  128,
+		},
+	}}
+	after := []treeDBStatsSnapshot{{
+		Name:     "validator-0",
+		Instance: "app#1",
+		Store:    "application.db",
+		WALDir:   "/simd/data/application.db/wal",
+		Metrics: map[string]float64{
+			"treedb.command_wal.writer.sync_ns_total": 3_500_000_000,
+			"treedb.cache.checkpoint.total_ms":        750,
+			"treedb.process.memory.heap_inuse_bytes":  256,
+		},
+	}}
+	deltas := treeDBStatsDeltaSnapshots(before, after)
+	if len(deltas) != 1 {
+		t.Fatalf("deltas len = %d, want 1", len(deltas))
+	}
+	if got := deltas[0].Metrics["treedb.command_wal.writer.sync_ns_total"].Delta; got != 2_500_000_000 {
+		t.Fatalf("sync delta = %v", got)
+	}
+	rows := treeDBTimingSummaryRows(deltas)
+	if len(rows) != 2 {
+		t.Fatalf("timing rows = %+v, want command WAL and checkpoint", rows)
+	}
+	gotSeconds := map[string]float64{}
+	for _, row := range rows {
+		gotSeconds[row.Group] = row.Seconds
+	}
+	if gotSeconds["command WAL"] != 2.5 {
+		t.Fatalf("command WAL seconds = %v, want 2.5", gotSeconds["command WAL"])
+	}
+	if gotSeconds["checkpoint"] != 0.25 {
+		t.Fatalf("checkpoint seconds = %v, want 0.25", gotSeconds["checkpoint"])
+	}
+}
+
+func TestRenderReportMarkdownIncludesTreeDBDeltasWithoutPrometheusRows(t *testing.T) {
+	artifact := reportArtifact{
+		GeneratedAt: time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC),
+		Results: []runResult{{
+			Scenario: scenario{Name: "plain-send"},
+			LoadWindow: &loadWindowObservation{
+				Reached:                true,
+				DurationSatisfied:      true,
+				Seconds:                12.5,
+				IncludedTransactions:   100,
+				SuccessfulTransactions: 100,
+				TargetTransactions:     100,
+				TreeDBStatDeltas: []treeDBStatsDelta{{
+					Name:     "validator-0",
+					Instance: "app#1",
+					Store:    "application.db",
+					WALDir:   "/simd/data/application.db/wal",
+					Metrics: map[string]metricDeltaValue{
+						"treedb.command_wal.writer.sync_ns_total": {
+							Before: 1_000_000_000,
+							After:  3_000_000_000,
+							Delta:  2_000_000_000,
+						},
+					},
+				}},
+			},
+		}},
+	}
+	md := renderReportMarkdown(artifact)
+	for _, want := range []string{
+		"### Accepted-Window TreeDB Timing Counter Deltas",
+		"| validator-0 | application.db | command WAL | 2 |",
+		"### Accepted-Window TreeDB Store Counter Deltas",
+		"treedb.command_wal.writer.sync_ns_total",
+		"/simd/data/application.db/wal",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "No accepted-window metric deltas were recorded.") {
+		t.Fatalf("markdown hid TreeDB deltas as no-delta message:\n%s", md)
+	}
+}
+
 func TestAppProfileRequestsKeepsExtendedPprofOptIn(t *testing.T) {
 	sc := withAppHeapProfile(scenario{Name: "plain-send", BaseImage: "simapp"})
 	if got := appProfileRequests(sc, appProfileCaptureConfig{}); len(got) != 0 {
@@ -467,6 +597,13 @@ func TestAppProfileCaptureConfigActiveWindowOptIn(t *testing.T) {
 	}
 	if !active.needsDiagnosticProfileFlags() {
 		t.Fatalf("active-window config should enable block/mutex sampling flags")
+	}
+	debugVars := appProfileCaptureConfig{DebugVars: true}
+	if !debugVars.needsPprof() {
+		t.Fatalf("debug-vars config should enable app pprof")
+	}
+	if debugVars.needsDiagnosticProfileFlags() {
+		t.Fatalf("debug-vars config should not enable block/mutex sampling flags")
 	}
 }
 
