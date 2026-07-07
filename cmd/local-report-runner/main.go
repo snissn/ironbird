@@ -112,6 +112,9 @@ type runResult struct {
 	ResourceSummary     []resourceSummary      `json:"resource_summary,omitempty"`
 	MetricsBefore       []metricSnapshot       `json:"metrics_before,omitempty"`
 	MetricsAfter        []metricSnapshot       `json:"metrics_after,omitempty"`
+	TreeDBStatsBefore   []treeDBStatsSnapshot  `json:"treedb_stats_before,omitempty"`
+	TreeDBStatsAfter    []treeDBStatsSnapshot  `json:"treedb_stats_after,omitempty"`
+	TreeDBStatDeltas    []treeDBStatsDelta     `json:"treedb_stat_deltas,omitempty"`
 	BackendVerification *backendVerification   `json:"backend_verification,omitempty"`
 	DataSizesBefore     []dataPathSize         `json:"data_sizes_before,omitempty"`
 	DataSizesAfter      []dataPathSize         `json:"data_sizes_after,omitempty"`
@@ -192,6 +195,26 @@ type metricDeltaValue struct {
 	Delta  float64 `json:"delta"`
 }
 
+type treeDBStatsSnapshot struct {
+	Name     string             `json:"name"`
+	URL      string             `json:"url,omitempty"`
+	Instance string             `json:"instance,omitempty"`
+	Store    string             `json:"store,omitempty"`
+	WALDir   string             `json:"wal_dir,omitempty"`
+	Metrics  map[string]float64 `json:"metrics,omitempty"`
+	Error    string             `json:"error,omitempty"`
+}
+
+type treeDBStatsDelta struct {
+	Name     string                      `json:"name"`
+	URL      string                      `json:"url,omitempty"`
+	Instance string                      `json:"instance,omitempty"`
+	Store    string                      `json:"store,omitempty"`
+	WALDir   string                      `json:"wal_dir,omitempty"`
+	Metrics  map[string]metricDeltaValue `json:"metrics,omitempty"`
+	Error    string                      `json:"error,omitempty"`
+}
+
 type dataPathSize struct {
 	Name  string `json:"name"`
 	Path  string `json:"path"`
@@ -253,6 +276,9 @@ type loadWindowObservation struct {
 	MetricsBefore          []metricSnapshot      `json:"metrics_before,omitempty"`
 	MetricsAfter           []metricSnapshot      `json:"metrics_after,omitempty"`
 	MetricDeltas           []metricDeltaSnapshot `json:"metric_deltas,omitempty"`
+	TreeDBStatsBefore      []treeDBStatsSnapshot `json:"treedb_stats_before,omitempty"`
+	TreeDBStatsAfter       []treeDBStatsSnapshot `json:"treedb_stats_after,omitempty"`
+	TreeDBStatDeltas       []treeDBStatsDelta    `json:"treedb_stat_deltas,omitempty"`
 	StorageSignals         []storageSignal       `json:"storage_signal_summary,omitempty"`
 	Error                  string                `json:"error,omitempty"`
 }
@@ -361,10 +387,11 @@ type appProfileCaptureConfig struct {
 	DiagnosticDuration   time.Duration
 	ActiveWindowOutDir   string
 	ActiveWindowDuration time.Duration
+	DebugVars            bool
 }
 
 func (cfg appProfileCaptureConfig) needsPprof() bool {
-	return cfg.HeapOutDir != "" || cfg.PprofOutDir != "" || cfg.DiagnosticOutDir != "" || cfg.ActiveWindowOutDir != ""
+	return cfg.HeapOutDir != "" || cfg.PprofOutDir != "" || cfg.DiagnosticOutDir != "" || cfg.ActiveWindowOutDir != "" || cfg.DebugVars
 }
 
 func (cfg appProfileCaptureConfig) needsDiagnosticProfileFlags() bool {
@@ -573,6 +600,7 @@ func main() {
 		appDiagProfileDuration      = flag.Duration("app-diagnostic-profile-duration", 5*time.Second, "duration for timed validator app block, mutex, and trace diagnostic pprof captures")
 		appActiveWindowProfileDir   = flag.String("app-active-window-profile-dir", "", "when set, enable validator pprof and capture validator 0 CPU, heap, allocs, goroutine, block, mutex, and trace app profiles while the load test is active")
 		appActiveWindowDuration     = flag.Duration("app-active-window-profile-duration", 5*time.Second, "duration for timed active-window validator app CPU, block, mutex, and trace pprof captures")
+		appDebugVars                = flag.Bool("app-debug-vars", false, "when true, enable validator pprof and collect TreeDB /debug/vars before and after the accepted load window")
 		rawTxAudit                  = flag.Bool("raw-tx-audit", true, "when true, verify non-EVM tx inclusion with post-load CometBFT /tx queries; disable for clean app CPU profiles")
 		loadWindowDrainTimeout      = flag.Duration("load-window-drain-timeout", 0, "optional extra time to keep the chain running after Catalyst exits so app metrics can reach the load-window target")
 		loadWindowMinDuration       = flag.Duration("load-window-min-duration", 0, "minimum app-metric load-window duration required for final throughput evidence; short reached windows are annotated invalid")
@@ -655,6 +683,7 @@ func main() {
 		DiagnosticDuration:   *appDiagProfileDuration,
 		ActiveWindowOutDir:   *appActiveWindowProfileDir,
 		ActiveWindowDuration: *appActiveWindowDuration,
+		DebugVars:            *appDebugVars,
 	}
 	preseed := makePreseedConfig(*preseedProfile, *preseedAccounts, *wallets)
 	celestiaConfig := celestiaSyncConfig{
@@ -1306,6 +1335,11 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	endPhase = startPhase(&result, "collect_before_metrics", "")
 	result.MetricsBefore = scrapeMetrics(ctx, result.ProviderName)
 	endPhase()
+	if appProfiles.DebugVars {
+		endPhase = startPhase(&result, "collect_before_treedb_debug_vars", "")
+		result.TreeDBStatsBefore = scrapeTreeDBDebugVars(ctx, result.ProviderName)
+		endPhase()
+	}
 	endPhase = startPhase(&result, "collect_before_data_sizes", "")
 	result.DataSizesBefore = collectDataSizes(ctx, result.ProviderName, sc)
 	endPhase()
@@ -1333,6 +1367,12 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 		endPhase = startPhase(&result, "collect_after_metrics", "")
 		result.MetricsAfter = scrapeMetrics(ctx, result.ProviderName)
 		endPhase()
+		if appProfiles.DebugVars {
+			endPhase = startPhase(&result, "collect_after_treedb_debug_vars", "")
+			result.TreeDBStatsAfter = scrapeTreeDBDebugVars(ctx, result.ProviderName)
+			result.TreeDBStatDeltas = treeDBStatsDeltaSnapshots(result.TreeDBStatsBefore, result.TreeDBStatsAfter)
+			endPhase()
+		}
 		endPhase = startPhase(&result, "collect_after_data_sizes", "")
 		result.DataSizesAfter = collectDataSizes(ctx, result.ProviderName, sc)
 		endPhase()
@@ -1350,7 +1390,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	intendedTxs := intendedTransactions(sc)
 	if !sc.IsEVMChain && intendedTxs > 0 {
 		targetTxs := loadWindowTargetTransactions(intendedTxs, loadWindowTargetFraction)
-		windowMonitor = startLoadWindowMonitor(ctx, result.ProviderName, result.MetricsBefore, targetTxs, loadWindowMinDuration, 500*time.Millisecond)
+		windowMonitor = startLoadWindowMonitor(ctx, result.ProviderName, result.MetricsBefore, result.TreeDBStatsBefore, appProfiles.DebugVars, targetTxs, loadWindowMinDuration, 500*time.Millisecond)
 	}
 	loadActivity := &loadtest.Activity{}
 	if stopCatalystAfterLoadWindow && windowMonitor != nil {
@@ -1406,6 +1446,12 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	endPhase = startPhase(&result, "collect_after_metrics", "")
 	result.MetricsAfter = scrapeMetrics(ctx, result.ProviderName)
 	endPhase()
+	if appProfiles.DebugVars {
+		endPhase = startPhase(&result, "collect_after_treedb_debug_vars", "")
+		result.TreeDBStatsAfter = scrapeTreeDBDebugVars(ctx, result.ProviderName)
+		result.TreeDBStatDeltas = treeDBStatsDeltaSnapshots(result.TreeDBStatsBefore, result.TreeDBStatsAfter)
+		endPhase()
+	}
 	endPhase = startPhase(&result, "collect_after_data_sizes", "")
 	result.DataSizesAfter = collectDataSizes(ctx, result.ProviderName, sc)
 	endPhase()
@@ -1965,7 +2011,7 @@ func (m *loadWindowMonitor) Wait(timeout time.Duration) loadWindowObservation {
 	}
 }
 
-func startLoadWindowMonitor(ctx context.Context, providerName string, baseline []metricSnapshot, targetTransactions int, minDuration, interval time.Duration) *loadWindowMonitor {
+func startLoadWindowMonitor(ctx context.Context, providerName string, baseline []metricSnapshot, treeDBBaseline []treeDBStatsSnapshot, collectTreeDBStats bool, targetTransactions int, minDuration, interval time.Duration) *loadWindowMonitor {
 	started := time.Now()
 	if targetTransactions <= 0 {
 		done := make(chan loadWindowObservation, 1)
@@ -1976,6 +2022,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 			StartedAt:          started,
 			EndedAt:            time.Now(),
 			MetricsBefore:      cloneMetricSnapshots(baseline),
+			TreeDBStatsBefore:  cloneTreeDBStatsSnapshots(treeDBBaseline),
 			Error:              "target transaction count is not positive",
 		}
 		done <- obs
@@ -1995,6 +2042,17 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 			DurationSatisfied:  minDuration <= 0,
 			StartedAt:          started,
 			MetricsBefore:      cloneMetricSnapshots(baseline),
+			TreeDBStatsBefore:  cloneTreeDBStatsSnapshots(treeDBBaseline),
+		}
+		attachTreeDBStats := func(obs loadWindowObservation) loadWindowObservation {
+			if !collectTreeDBStats {
+				return obs
+			}
+			after := scrapeTreeDBDebugVars(ctx, providerName)
+			obs.TreeDBStatsBefore = cloneTreeDBStatsSnapshots(treeDBBaseline)
+			obs.TreeDBStatsAfter = after
+			obs.TreeDBStatDeltas = treeDBStatsDeltaSnapshots(treeDBBaseline, after)
+			return obs
 		}
 		observe := func() loadWindowObservation {
 			metrics := scrapeMetrics(monitorCtx, providerName)
@@ -2021,6 +2079,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 				if !obs.DurationSatisfied {
 					obs.Error = fmt.Sprintf("load window reached in %.3fs, below minimum duration %s; increase offered workload", obs.Seconds, minDuration)
 				}
+				obs = attachTreeDBStats(obs)
 			}
 			return obs
 		}
@@ -2037,6 +2096,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 				if last.Error == "" {
 					last.Error = monitorCtx.Err().Error()
 				}
+				last = attachTreeDBStats(last)
 				monitor.setLast(last)
 				done <- last
 				return
@@ -2883,6 +2943,182 @@ func containerMetricsURL(ctx context.Context, name string) string {
 	return ""
 }
 
+func scrapeTreeDBDebugVars(ctx context.Context, providerName string) []treeDBStatsSnapshot {
+	names := dockerContainerNames(ctx, providerName, false)
+	if len(names) == 0 {
+		return nil
+	}
+	const debugVarsURL = "http://127.0.0.1:6060/debug/vars"
+	var out []treeDBStatsSnapshot
+	for _, name := range names {
+		if strings.Contains(name, "catalyst") {
+			continue
+		}
+		scrapeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		raw, err := exec.CommandContext(scrapeCtx, "docker", "exec", name, "sh", "-c", "wget -q -O - "+shellQuote(debugVarsURL)).CombinedOutput()
+		cancel()
+		if err != nil {
+			out = append(out, treeDBStatsSnapshot{
+				Name:  name,
+				URL:   debugVarsURL,
+				Error: fmt.Sprintf("scrape debug vars: %v output=%q", err, trimLog(string(raw), 2000)),
+			})
+			continue
+		}
+		snapshots, err := parseTreeDBDebugVars(name, debugVarsURL, raw)
+		if err != nil {
+			out = append(out, treeDBStatsSnapshot{Name: name, URL: debugVarsURL, Error: err.Error()})
+			continue
+		}
+		out = append(out, snapshots...)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			if out[i].Store == out[j].Store {
+				return out[i].Instance < out[j].Instance
+			}
+			return out[i].Store < out[j].Store
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func parseTreeDBDebugVars(name, url string, raw []byte) ([]treeDBStatsSnapshot, error) {
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil, fmt.Errorf("parse debug vars JSON: %v", err)
+	}
+	treedbRaw, ok := root["treedb"]
+	if !ok {
+		return nil, nil
+	}
+	treedb, ok := treedbRaw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("debug vars treedb value has type %T, want object", treedbRaw)
+	}
+	instancesRaw, _ := treedb["instances"].(map[string]any)
+	if len(instancesRaw) == 0 {
+		snapshot := treeDBStatsSnapshot{
+			Name:     name,
+			URL:      url,
+			Instance: "current",
+			WALDir:   stringTreeDBExpvarValue(treedb, "treedb.expvar.current_wal_dir", "treedb.process.identity.wal_dir"),
+			Metrics:  numericTreeDBExpvarMetrics(treedb),
+		}
+		snapshot.Store = treeDBStoreFromWALDir(snapshot.WALDir)
+		if len(snapshot.Metrics) == 0 {
+			return nil, nil
+		}
+		return []treeDBStatsSnapshot{snapshot}, nil
+	}
+	out := make([]treeDBStatsSnapshot, 0, len(instancesRaw))
+	for instance, rawInstance := range instancesRaw {
+		stats, ok := rawInstance.(map[string]any)
+		if !ok {
+			out = append(out, treeDBStatsSnapshot{
+				Name:     name,
+				URL:      url,
+				Instance: instance,
+				Error:    fmt.Sprintf("treedb instance has type %T, want object", rawInstance),
+			})
+			continue
+		}
+		snapshot := treeDBStatsSnapshot{
+			Name:     name,
+			URL:      url,
+			Instance: instance,
+			WALDir:   stringTreeDBExpvarValue(stats, "treedb.expvar.wal_dir", "treedb.process.identity.wal_dir"),
+			Metrics:  numericTreeDBExpvarMetrics(stats),
+		}
+		snapshot.Store = treeDBStoreFromWALDir(snapshot.WALDir)
+		if len(snapshot.Metrics) > 0 || snapshot.Error != "" {
+			out = append(out, snapshot)
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func stringTreeDBExpvarValue(stats map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if raw, ok := stats[key]; ok {
+			if value := strings.TrimSpace(fmt.Sprint(raw)); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func numericTreeDBExpvarMetrics(stats map[string]any) map[string]float64 {
+	out := map[string]float64{}
+	for key, raw := range stats {
+		if !strings.HasPrefix(key, "treedb.") {
+			continue
+		}
+		if key == "treedb.expvar.wal_dir" || key == "treedb.process.identity.wal_dir" {
+			continue
+		}
+		value, ok := treeDBExpvarFloat(raw)
+		if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func treeDBExpvarFloat(raw any) (float64, bool) {
+	switch value := raw.(type) {
+	case float64:
+		return value, true
+	case float32:
+		return float64(value), true
+	case int:
+		return float64(value), true
+	case int64:
+		return float64(value), true
+	case uint64:
+		return float64(value), true
+	case json.Number:
+		parsed, err := value.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func treeDBStoreFromWALDir(walDir string) string {
+	normalized := strings.ReplaceAll(walDir, "\\", "/")
+	for _, part := range strings.Split(normalized, "/") {
+		switch part {
+		case "application.db", "blockstore.db", "state.db", "tx_index.db", "evidence.db":
+			return part
+		}
+	}
+	for _, part := range strings.Split(normalized, "/") {
+		if strings.HasSuffix(part, ".db") {
+			return part
+		}
+	}
+	if walDir == "" {
+		return "unknown"
+	}
+	return filepath.Base(filepath.Dir(normalized))
+}
+
 func parsePrometheusMetrics(text string) map[string]float64 {
 	metrics := map[string]float64{}
 	for _, line := range strings.Split(text, "\n") {
@@ -3120,6 +3356,31 @@ func cloneMetricSnapshots(snapshots []metricSnapshot) []metricSnapshot {
 	return out
 }
 
+func cloneTreeDBStatsSnapshots(snapshots []treeDBStatsSnapshot) []treeDBStatsSnapshot {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	out := make([]treeDBStatsSnapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		copied := treeDBStatsSnapshot{
+			Name:     snapshot.Name,
+			URL:      snapshot.URL,
+			Instance: snapshot.Instance,
+			Store:    snapshot.Store,
+			WALDir:   snapshot.WALDir,
+			Error:    snapshot.Error,
+		}
+		if len(snapshot.Metrics) > 0 {
+			copied.Metrics = make(map[string]float64, len(snapshot.Metrics))
+			for key, value := range snapshot.Metrics {
+				copied.Metrics[key] = value
+			}
+		}
+		out = append(out, copied)
+	}
+	return out
+}
+
 func metricDeltaSnapshots(before, after []metricSnapshot) []metricDeltaSnapshot {
 	beforeByName := metricSnapshotsByName(before)
 	afterByName := metricSnapshotsByName(after)
@@ -3187,7 +3448,100 @@ func metricDeltaSnapshots(before, after []metricSnapshot) []metricDeltaSnapshot 
 	return out
 }
 
+func treeDBStatsDeltaSnapshots(before, after []treeDBStatsSnapshot) []treeDBStatsDelta {
+	beforeByID := treeDBStatsSnapshotsByID(before)
+	afterByID := treeDBStatsSnapshotsByID(after)
+	idSet := map[string]struct{}{}
+	for _, snapshot := range before {
+		idSet[treeDBStatsSnapshotID(snapshot)] = struct{}{}
+	}
+	for _, snapshot := range after {
+		idSet[treeDBStatsSnapshotID(snapshot)] = struct{}{}
+	}
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	out := make([]treeDBStatsDelta, 0, len(ids))
+	for _, id := range ids {
+		beforeSnap := beforeByID[id]
+		afterSnap := afterByID[id]
+		delta := treeDBStatsDelta{}
+		if beforeSnap != nil {
+			delta.Name = beforeSnap.Name
+			delta.URL = beforeSnap.URL
+			delta.Instance = beforeSnap.Instance
+			delta.Store = beforeSnap.Store
+			delta.WALDir = beforeSnap.WALDir
+			delta.Error = appendSnapshotError(delta.Error, "before", beforeSnap.Error)
+		}
+		if afterSnap != nil {
+			if delta.Name == "" {
+				delta.Name = afterSnap.Name
+			}
+			if delta.URL == "" {
+				delta.URL = afterSnap.URL
+			}
+			if delta.Instance == "" {
+				delta.Instance = afterSnap.Instance
+			}
+			if delta.Store == "" {
+				delta.Store = afterSnap.Store
+			}
+			if delta.WALDir == "" {
+				delta.WALDir = afterSnap.WALDir
+			}
+			delta.Error = appendSnapshotError(delta.Error, "after", afterSnap.Error)
+		}
+		metricKeys := map[string]struct{}{}
+		if beforeSnap != nil {
+			for key := range beforeSnap.Metrics {
+				metricKeys[key] = struct{}{}
+			}
+		}
+		if afterSnap != nil {
+			for key := range afterSnap.Metrics {
+				metricKeys[key] = struct{}{}
+			}
+		}
+		if treeDBStatsSnapshotsComparable(beforeSnap, afterSnap) && len(metricKeys) > 0 {
+			delta.Metrics = make(map[string]metricDeltaValue, len(metricKeys))
+			for key := range metricKeys {
+				beforeValue, beforeOK := beforeSnap.Metrics[key]
+				afterValue, afterOK := afterSnap.Metrics[key]
+				if !beforeOK || !afterOK {
+					continue
+				}
+				delta.Metrics[key] = metricDeltaValue{
+					Before: beforeValue,
+					After:  afterValue,
+					Delta:  afterValue - beforeValue,
+				}
+			}
+		}
+		if len(delta.Metrics) > 0 || delta.Error != "" {
+			out = append(out, delta)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func metricSnapshotsComparable(beforeSnap, afterSnap *metricSnapshot) bool {
+	if beforeSnap == nil || afterSnap == nil {
+		return false
+	}
+	if beforeSnap.Error != "" || afterSnap.Error != "" {
+		return false
+	}
+	return len(beforeSnap.Metrics) > 0 && len(afterSnap.Metrics) > 0
+}
+
+func treeDBStatsSnapshotsComparable(beforeSnap, afterSnap *treeDBStatsSnapshot) bool {
 	if beforeSnap == nil || afterSnap == nil {
 		return false
 	}
@@ -3214,6 +3568,18 @@ func metricSnapshotsByName(snapshots []metricSnapshot) map[string]*metricSnapsho
 		out[snapshots[i].Name] = &snapshots[i]
 	}
 	return out
+}
+
+func treeDBStatsSnapshotsByID(snapshots []treeDBStatsSnapshot) map[string]*treeDBStatsSnapshot {
+	out := make(map[string]*treeDBStatsSnapshot, len(snapshots))
+	for i := range snapshots {
+		out[treeDBStatsSnapshotID(snapshots[i])] = &snapshots[i]
+	}
+	return out
+}
+
+func treeDBStatsSnapshotID(snapshot treeDBStatsSnapshot) string {
+	return snapshot.Name + "\x00" + snapshot.Instance
 }
 
 func metricDeltas(before, after map[string]float64) map[string]float64 {
@@ -4134,7 +4500,10 @@ func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
 
 	rows := metricDeltaRows(obs.MetricDeltas)
 	errors := metricDeltaErrors(obs.MetricDeltas)
-	if len(rows) == 0 && len(errors) == 0 {
+	treeDBRows := treeDBStatDeltaRows(obs.TreeDBStatDeltas)
+	treeDBTimingRows := treeDBTimingSummaryRows(obs.TreeDBStatDeltas)
+	treeDBErrors := treeDBStatDeltaErrors(obs.TreeDBStatDeltas)
+	if len(rows) == 0 && len(errors) == 0 && len(treeDBRows) == 0 && len(treeDBTimingRows) == 0 && len(treeDBErrors) == 0 {
 		b.WriteString("No accepted-window metric deltas were recorded.\n\n")
 		return
 	}
@@ -4165,6 +4534,69 @@ func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
 		for _, errRow := range errors {
 			b.WriteString("| ")
 			b.WriteString(mdCell(errRow.Container))
+			b.WriteString(" | ")
+			b.WriteString(mdCell(errRow.Error))
+			b.WriteString(" |\n")
+		}
+		b.WriteByte('\n')
+	}
+
+	if len(treeDBTimingRows) > 0 {
+		b.WriteString("### Accepted-Window TreeDB Timing Counter Deltas\n\n")
+		b.WriteString("These are TreeDB-owned timing counters grouped by metric family. They are useful attribution signals, but may overlap and are not an exclusive wall-time decomposition.\n\n")
+		b.WriteString("| Container | Store | Group | Counter seconds |\n")
+		b.WriteString("| --- | --- | --- | ---: |\n")
+		for _, row := range treeDBTimingRows {
+			b.WriteString("| ")
+			b.WriteString(mdCell(row.Container))
+			b.WriteString(" | ")
+			b.WriteString(mdCell(row.Store))
+			b.WriteString(" | ")
+			b.WriteString(mdCell(row.Group))
+			b.WriteString(" | ")
+			b.WriteString(metricFloat(row.Seconds))
+			b.WriteString(" |\n")
+		}
+		b.WriteByte('\n')
+	}
+
+	if len(treeDBRows) > 0 {
+		b.WriteString("### Accepted-Window TreeDB Store Counter Deltas\n\n")
+		b.WriteString("| Container | Store | WAL dir | Metric | Before | After | Delta | Delta s |\n")
+		b.WriteString("| --- | --- | --- | --- | ---: | ---: | ---: | ---: |\n")
+		for _, row := range treeDBRows {
+			b.WriteString("| ")
+			b.WriteString(mdCell(row.Container))
+			b.WriteString(" | ")
+			b.WriteString(mdCell(row.Store))
+			b.WriteString(" | ")
+			b.WriteString(mdCell(row.WALDir))
+			b.WriteString(" | ")
+			b.WriteString(mdCell(row.Metric))
+			b.WriteString(" | ")
+			b.WriteString(metricFloat(row.Before))
+			b.WriteString(" | ")
+			b.WriteString(metricFloat(row.After))
+			b.WriteString(" | ")
+			b.WriteString(metricFloat(row.Delta))
+			b.WriteString(" | ")
+			if row.DeltaSecondsOK {
+				b.WriteString(metricFloat(row.DeltaSeconds))
+			}
+			b.WriteString(" |\n")
+		}
+		b.WriteByte('\n')
+	}
+
+	if len(treeDBErrors) > 0 {
+		b.WriteString("### Accepted-Window TreeDB Debug Vars Errors\n\n")
+		b.WriteString("| Container | Instance | Error |\n")
+		b.WriteString("| --- | --- | --- |\n")
+		for _, errRow := range treeDBErrors {
+			b.WriteString("| ")
+			b.WriteString(mdCell(errRow.Container))
+			b.WriteString(" | ")
+			b.WriteString(mdCell(errRow.Instance))
 			b.WriteString(" | ")
 			b.WriteString(mdCell(errRow.Error))
 			b.WriteString(" |\n")
@@ -4265,6 +4697,160 @@ func metricDeltaRows(snapshots []metricDeltaSnapshot) []metricDeltaRow {
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Container == rows[j].Container {
 			return rows[i].Metric < rows[j].Metric
+		}
+		return rows[i].Container < rows[j].Container
+	})
+	return rows
+}
+
+type treeDBStatDeltaRow struct {
+	Container      string
+	Store          string
+	WALDir         string
+	Metric         string
+	Before         float64
+	After          float64
+	Delta          float64
+	DeltaSeconds   float64
+	DeltaSecondsOK bool
+}
+
+func treeDBStatDeltaRows(snapshots []treeDBStatsDelta) []treeDBStatDeltaRow {
+	var rows []treeDBStatDeltaRow
+	for _, snapshot := range snapshots {
+		for metric, values := range snapshot.Metrics {
+			if values.Delta == 0 {
+				continue
+			}
+			seconds, secondsOK := treeDBMetricDeltaSeconds(metric, values.Delta)
+			rows = append(rows, treeDBStatDeltaRow{
+				Container:      snapshot.Name,
+				Store:          snapshot.Store,
+				WALDir:         snapshot.WALDir,
+				Metric:         metric,
+				Before:         values.Before,
+				After:          values.After,
+				Delta:          values.Delta,
+				DeltaSeconds:   seconds,
+				DeltaSecondsOK: secondsOK,
+			})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Container == rows[j].Container {
+			if rows[i].Store == rows[j].Store {
+				return rows[i].Metric < rows[j].Metric
+			}
+			return rows[i].Store < rows[j].Store
+		}
+		return rows[i].Container < rows[j].Container
+	})
+	return rows
+}
+
+type treeDBTimingSummaryRow struct {
+	Container string
+	Store     string
+	Group     string
+	Seconds   float64
+}
+
+func treeDBTimingSummaryRows(snapshots []treeDBStatsDelta) []treeDBTimingSummaryRow {
+	type key struct {
+		container string
+		store     string
+		group     string
+	}
+	totals := map[key]float64{}
+	for _, snapshot := range snapshots {
+		for metric, values := range snapshot.Metrics {
+			seconds, ok := treeDBMetricDeltaSeconds(metric, values.Delta)
+			if !ok || seconds == 0 {
+				continue
+			}
+			totals[key{
+				container: snapshot.Name,
+				store:     snapshot.Store,
+				group:     treeDBMetricGroup(metric),
+			}] += seconds
+		}
+	}
+	var rows []treeDBTimingSummaryRow
+	for key, seconds := range totals {
+		rows = append(rows, treeDBTimingSummaryRow{
+			Container: key.container,
+			Store:     key.store,
+			Group:     key.group,
+			Seconds:   seconds,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Container == rows[j].Container {
+			if rows[i].Store == rows[j].Store {
+				if rows[i].Seconds == rows[j].Seconds {
+					return rows[i].Group < rows[j].Group
+				}
+				return rows[i].Seconds > rows[j].Seconds
+			}
+			return rows[i].Store < rows[j].Store
+		}
+		return rows[i].Container < rows[j].Container
+	})
+	return rows
+}
+
+func treeDBMetricDeltaSeconds(metric string, delta float64) (float64, bool) {
+	switch {
+	case strings.Contains(metric, "ns_total"), strings.HasSuffix(metric, ".ns"):
+		return delta / 1e9, true
+	case strings.Contains(metric, "ms_total"), strings.HasSuffix(metric, ".ms"), strings.HasSuffix(metric, "total_ms"):
+		return delta / 1e3, true
+	case strings.Contains(metric, "seconds_total"), strings.HasSuffix(metric, ".seconds"):
+		return delta, true
+	default:
+		return 0, false
+	}
+}
+
+func treeDBMetricGroup(metric string) string {
+	switch {
+	case strings.Contains(metric, "command_wal"):
+		return "command WAL"
+	case strings.Contains(metric, "checkpoint"):
+		return "checkpoint"
+	case strings.Contains(metric, "flush_apply") || strings.Contains(metric, "flush_span") || strings.Contains(metric, "flush_backlog"):
+		return "flush/apply"
+	case strings.Contains(metric, "vlog") || strings.Contains(metric, "value_log"):
+		return "value log"
+	case strings.Contains(metric, "maintenance") || strings.Contains(metric, "bg_vacuum"):
+		return "maintenance"
+	case strings.Contains(metric, "wait"):
+		return "foreground wait"
+	default:
+		return "other TreeDB timing"
+	}
+}
+
+type treeDBStatDeltaErrorRow struct {
+	Container string
+	Instance  string
+	Error     string
+}
+
+func treeDBStatDeltaErrors(snapshots []treeDBStatsDelta) []treeDBStatDeltaErrorRow {
+	var rows []treeDBStatDeltaErrorRow
+	for _, snapshot := range snapshots {
+		if snapshot.Error != "" {
+			rows = append(rows, treeDBStatDeltaErrorRow{
+				Container: snapshot.Name,
+				Instance:  snapshot.Instance,
+				Error:     snapshot.Error,
+			})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Container == rows[j].Container {
+			return rows[i].Instance < rows[j].Instance
 		}
 		return rows[i].Container < rows[j].Container
 	})
