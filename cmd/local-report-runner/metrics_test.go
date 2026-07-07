@@ -319,6 +319,11 @@ func TestMetricDeltaSnapshotsPreserveScrapeErrorsWithoutFabricatingDeltas(t *tes
 }
 
 func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T) {
+	profileStarted := time.Date(2026, 7, 6, 12, 1, 0, 0, time.UTC)
+	profileFinished := time.Date(2026, 7, 6, 12, 1, 5, 250000000, time.UTC)
+	loadStartOffset := 1.5
+	loadEndOffset := 6.75
+	loadOverlap := 5.25
 	artifact := reportArtifact{
 		GeneratedAt: time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC),
 		Git: map[string]string{
@@ -343,14 +348,19 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 			},
 			ProfileArtifacts: []profileArtifact{
 				{
-					Name:              "plain-send",
-					Kind:              "validator_block",
-					Boundary:          profileBoundaryWholeRun,
-					Endpoint:          "block?seconds=5",
-					RequestedSeconds:  5,
-					CollectionSeconds: 5.25,
-					Path:              "/tmp/plain-send-block.pprof",
-					TopSummaryPath:    "/tmp/plain-send-block.pprof.top.txt",
+					Name:                                     "plain-send",
+					Kind:                                     "validator_block",
+					Boundary:                                 profileBoundaryWholeRun,
+					Endpoint:                                 "block?seconds=5",
+					RequestedSeconds:                         5,
+					StartedAt:                                &profileStarted,
+					FinishedAt:                               &profileFinished,
+					CollectionSeconds:                        5.25,
+					CollectionStartedLoadWindowOffsetSeconds: &loadStartOffset,
+					CollectionFinishedLoadWindowOffsetSeconds: &loadEndOffset,
+					CollectionLoadWindowOverlapSeconds:        &loadOverlap,
+					Path:                                      "/tmp/plain-send-block.pprof",
+					TopSummaryPath:                            "/tmp/plain-send-block.pprof.top.txt",
 				},
 				{
 					Name:     "plain-send",
@@ -372,7 +382,11 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 		"validator_block",
 		profileBoundaryWholeRun,
 		"block?seconds=5",
+		"2026-07-06T12:01:00Z",
+		"2026-07-06T12:01:05.25Z",
 		"5.25",
+		"1.5",
+		"6.75",
 		"/tmp/plain-send-block.pprof.top.txt",
 		"fetch validator_mutex profile exit 1",
 	} {
@@ -438,6 +452,24 @@ func TestAppProfileRequestsKeepsExtendedPprofOptIn(t *testing.T) {
 	}
 }
 
+func TestAppProfileCaptureConfigActiveWindowOptIn(t *testing.T) {
+	var zero appProfileCaptureConfig
+	if zero.needsPprof() {
+		t.Fatalf("zero config unexpectedly needs pprof")
+	}
+	if zero.needsDiagnosticProfileFlags() {
+		t.Fatalf("zero config unexpectedly needs diagnostic profile flags")
+	}
+
+	active := appProfileCaptureConfig{ActiveWindowOutDir: "/tmp/active"}
+	if !active.needsPprof() {
+		t.Fatalf("active-window config should enable app pprof")
+	}
+	if !active.needsDiagnosticProfileFlags() {
+		t.Fatalf("active-window config should enable block/mutex sampling flags")
+	}
+}
+
 func TestAppProfileRequestsAddsDiagnosticProfilesOptIn(t *testing.T) {
 	sc := withAppHeapProfile(scenario{Name: "plain-send", BaseImage: "simapp"})
 	requests := appProfileRequests(sc, appProfileCaptureConfig{
@@ -463,6 +495,42 @@ func TestAppProfileRequestsAddsDiagnosticProfilesOptIn(t *testing.T) {
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("diagnostic profile requests = %v, want %v", got, want)
+	}
+}
+
+func TestAppActiveWindowProfileRequestsAddsAllKindsOptIn(t *testing.T) {
+	sc := withAppHeapProfile(scenario{Name: "plain-send", BaseImage: "simapp"})
+	if got := appActiveWindowProfileRequests(sc, appProfileCaptureConfig{}); len(got) != 0 {
+		t.Fatalf("active profile requests without dir len = %d, want 0", len(got))
+	}
+
+	requests := appActiveWindowProfileRequests(sc, appProfileCaptureConfig{
+		ActiveWindowOutDir:   "/tmp/active",
+		ActiveWindowDuration: 1500 * time.Millisecond,
+	})
+
+	var got []string
+	for _, req := range requests {
+		got = append(got, strings.Join([]string{
+			req.Kind,
+			req.Endpoint,
+			req.FileName,
+			req.OutDir,
+			req.Boundary,
+			req.Duration.String(),
+		}, "|"))
+	}
+	want := []string{
+		"validator_cpu|profile?seconds=2|plain-send-validator-0-active-window-cpu.pprof|/tmp/active|" + profileBoundaryActiveWindow + "|1.5s",
+		"validator_heap|heap?gc=1|plain-send-validator-0-active-window-heap.pprof|/tmp/active|" + profileBoundaryActiveWindow + "|0s",
+		"validator_allocs|allocs|plain-send-validator-0-active-window-allocs.pprof|/tmp/active|" + profileBoundaryActiveWindow + "|0s",
+		"validator_goroutine|goroutine|plain-send-validator-0-active-window-goroutine.pprof|/tmp/active|" + profileBoundaryActiveWindow + "|0s",
+		"validator_block|block?seconds=2|plain-send-validator-0-active-window-block.pprof|/tmp/active|" + profileBoundaryActiveWindow + "|1.5s",
+		"validator_mutex|mutex?seconds=2|plain-send-validator-0-active-window-mutex.pprof|/tmp/active|" + profileBoundaryActiveWindow + "|1.5s",
+		"validator_trace|trace?seconds=2|plain-send-validator-0-active-window-trace.out|/tmp/active|" + profileBoundaryActiveWindow + "|1.5s",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("active profile requests = %v, want %v", got, want)
 	}
 }
 
@@ -508,6 +576,75 @@ func TestSplitAppProfileRequestsForRawTxAuditKeepsCPUAfterAudit(t *testing.T) {
 	}
 	if len(postAudit) != 1 || postAudit[0].Kind != "validator_cpu" {
 		t.Fatalf("post-audit requests = %+v, want only validator_cpu", postAudit)
+	}
+}
+
+func TestAnnotateProfileArtifactsWithLoadWindowTiming(t *testing.T) {
+	loadStarted := time.Date(2026, 7, 7, 1, 2, 3, 0, time.UTC)
+	loadEnded := loadStarted.Add(5 * time.Second)
+	collectionStarted := loadStarted.Add(2 * time.Second)
+	collectionFinished := loadStarted.Add(6 * time.Second)
+
+	artifacts := annotateProfileArtifactsWithLoadWindowTiming([]profileArtifact{{
+		Kind:       "validator_cpu",
+		StartedAt:  &collectionStarted,
+		FinishedAt: &collectionFinished,
+	}}, &loadWindowObservation{
+		StartedAt: loadStarted,
+		EndedAt:   loadEnded,
+	})
+
+	if len(artifacts) != 1 {
+		t.Fatalf("artifacts len = %d, want 1", len(artifacts))
+	}
+	if artifacts[0].CollectionStartedLoadWindowOffsetSeconds == nil || *artifacts[0].CollectionStartedLoadWindowOffsetSeconds != 2 {
+		t.Fatalf("start offset = %v, want 2", artifacts[0].CollectionStartedLoadWindowOffsetSeconds)
+	}
+	if artifacts[0].CollectionFinishedLoadWindowOffsetSeconds == nil || *artifacts[0].CollectionFinishedLoadWindowOffsetSeconds != 6 {
+		t.Fatalf("finish offset = %v, want 6", artifacts[0].CollectionFinishedLoadWindowOffsetSeconds)
+	}
+	if artifacts[0].CollectionLoadWindowOverlapSeconds == nil || *artifacts[0].CollectionLoadWindowOverlapSeconds != 3 {
+		t.Fatalf("overlap = %v, want 3", artifacts[0].CollectionLoadWindowOverlapSeconds)
+	}
+}
+
+type fakeProfileEndpointValidator struct {
+	body []byte
+}
+
+func (v fakeProfileEndpointValidator) RunCommand(context.Context, []string) (string, string, int, error) {
+	time.Sleep(time.Millisecond)
+	return "", "", 0, nil
+}
+
+func (v fakeProfileEndpointValidator) ReadFile(context.Context, string) ([]byte, error) {
+	return v.body, nil
+}
+
+func TestCollectAppPprofEndpointProfileRecordsFinishedMetadata(t *testing.T) {
+	outDir := t.TempDir()
+	artifact := collectAppPprofEndpointProfile(context.Background(), fakeProfileEndpointValidator{body: []byte("profile")}, scenario{Name: "plain-send"}, appProfileRequest{
+		Kind:     "validator_heap",
+		Endpoint: "heap?gc=1",
+		FileName: "heap.pprof",
+		OutDir:   outDir,
+		Boundary: profileBoundaryActiveWindow,
+	})
+
+	if artifact.Error != "" {
+		t.Fatalf("artifact error = %q", artifact.Error)
+	}
+	if artifact.StartedAt == nil {
+		t.Fatalf("collection start was not recorded")
+	}
+	if artifact.FinishedAt == nil {
+		t.Fatalf("collection finish was not recorded")
+	}
+	if artifact.CollectionSeconds <= 0 {
+		t.Fatalf("collection seconds = %v, want > 0", artifact.CollectionSeconds)
+	}
+	if artifact.Path != filepath.Join(outDir, "heap.pprof") {
+		t.Fatalf("path = %q", artifact.Path)
 	}
 }
 
