@@ -2193,6 +2193,78 @@ func (m *loadWindowMonitor) Wait(timeout time.Duration) loadWindowObservation {
 	}
 }
 
+type treeDBStatsTimelineCollector struct {
+	ctx          context.Context
+	cancel       context.CancelFunc
+	done         chan struct{}
+	providerName string
+	started      time.Time
+	sampleMu     sync.Mutex
+	mu           sync.Mutex
+	samples      []treeDBStatsTimelineSample
+}
+
+func startTreeDBStatsTimelineCollector(ctx context.Context, providerName string, started time.Time, baseline []treeDBStatsSnapshot, interval time.Duration) *treeDBStatsTimelineCollector {
+	collectorCtx, cancel := context.WithCancel(ctx)
+	collector := &treeDBStatsTimelineCollector{
+		ctx:          collectorCtx,
+		cancel:       cancel,
+		done:         make(chan struct{}),
+		providerName: providerName,
+		started:      started,
+		samples:      initialTreeDBStatsTimeline(started, baseline),
+	}
+	go func() {
+		defer close(collector.done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case at := <-ticker.C:
+				collector.sample("interval", at)
+			case <-collectorCtx.Done():
+				return
+			}
+		}
+	}()
+	return collector
+}
+
+func (collector *treeDBStatsTimelineCollector) sample(label string, at time.Time) []treeDBStatsSnapshot {
+	if collector == nil {
+		return nil
+	}
+	collector.sampleMu.Lock()
+	defer collector.sampleMu.Unlock()
+	stats := scrapeTreeDBDebugVars(collector.ctx, collector.providerName)
+	collector.mu.Lock()
+	collector.samples = append(collector.samples, treeDBStatsTimelineSample{
+		Label:          label,
+		At:             at,
+		ElapsedSeconds: at.Sub(collector.started).Seconds(),
+		Stats:          cloneTreeDBStatsSnapshots(stats),
+	})
+	collector.mu.Unlock()
+	return stats
+}
+
+func (collector *treeDBStatsTimelineCollector) snapshot() []treeDBStatsTimelineSample {
+	if collector == nil {
+		return nil
+	}
+	collector.mu.Lock()
+	defer collector.mu.Unlock()
+	return cloneTreeDBStatsTimeline(collector.samples)
+}
+
+func (collector *treeDBStatsTimelineCollector) stop() {
+	if collector == nil {
+		return
+	}
+	collector.cancel()
+	<-collector.done
+}
+
 func startLoadWindowMonitor(ctx context.Context, providerName string, baseline []metricSnapshot, treeDBBaseline []treeDBStatsSnapshot, collectTreeDBStats bool, targetTransactions int, minDuration, interval, treeDBStatsSampleInterval time.Duration) *loadWindowMonitor {
 	started := time.Now()
 	if targetTransactions <= 0 {
@@ -2219,6 +2291,11 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		var treeDBCollector *treeDBStatsTimelineCollector
+		if collectTreeDBStats {
+			treeDBCollector = startTreeDBStatsTimelineCollector(ctx, providerName, started, treeDBBaseline, treeDBStatsSampleInterval)
+			defer treeDBCollector.stop()
+		}
 		last := loadWindowObservation{
 			TargetTransactions:  targetTransactions,
 			MinimumSeconds:      minDuration.Seconds(),
@@ -2226,33 +2303,17 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 			StartedAt:           started,
 			MetricsBefore:       cloneMetricSnapshots(baseline),
 			TreeDBStatsBefore:   cloneTreeDBStatsSnapshots(treeDBBaseline),
-			TreeDBStatsTimeline: initialTreeDBStatsTimeline(started, treeDBBaseline),
-		}
-		treeDBTimeline := cloneTreeDBStatsTimeline(last.TreeDBStatsTimeline)
-		lastTreeDBSampleAt := started
-		appendTreeDBStatsSample := func(label string, at time.Time) []treeDBStatsSnapshot {
-			if !collectTreeDBStats {
-				return nil
-			}
-			stats := scrapeTreeDBDebugVars(ctx, providerName)
-			treeDBTimeline = append(treeDBTimeline, treeDBStatsTimelineSample{
-				Label:          label,
-				At:             at,
-				ElapsedSeconds: at.Sub(started).Seconds(),
-				Stats:          cloneTreeDBStatsSnapshots(stats),
-			})
-			lastTreeDBSampleAt = at
-			return stats
+			TreeDBStatsTimeline: treeDBCollector.snapshot(),
 		}
 		attachTreeDBStats := func(obs loadWindowObservation, label string) loadWindowObservation {
 			if !collectTreeDBStats {
 				return obs
 			}
-			after := appendTreeDBStatsSample(label, obs.EndedAt)
+			after := treeDBCollector.sample(label, obs.EndedAt)
 			obs.TreeDBStatsBefore = cloneTreeDBStatsSnapshots(treeDBBaseline)
 			obs.TreeDBStatsAfter = after
 			obs.TreeDBStatDeltas = treeDBStatsDeltaSnapshots(treeDBBaseline, after)
-			obs.TreeDBStatsTimeline = cloneTreeDBStatsTimeline(treeDBTimeline)
+			obs.TreeDBStatsTimeline = treeDBCollector.snapshot()
 			return obs
 		}
 		observe := func() loadWindowObservation {
@@ -2274,11 +2335,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 				MetricsAfter:           metrics,
 				MetricDeltas:           metricDeltaSnapshots(baseline, metrics),
 				StorageSignals:         signals,
-				TreeDBStatsTimeline:    cloneTreeDBStatsTimeline(treeDBTimeline),
-			}
-			if collectTreeDBStats && ended.Sub(lastTreeDBSampleAt) >= treeDBStatsSampleInterval {
-				appendTreeDBStatsSample("interval", ended)
-				obs.TreeDBStatsTimeline = cloneTreeDBStatsTimeline(treeDBTimeline)
+				TreeDBStatsTimeline:    treeDBCollector.snapshot(),
 			}
 			if ok && successful >= targetTransactions {
 				obs.Reached = true
