@@ -52,7 +52,7 @@ The benchmark used the merged Ironbird instrumentation stack:
 | Repo | Evidence |
 | --- | --- |
 | `snissn/ironbird` | `snissn/ironbird#19`, merged as `74b6f994363898673ef25c9bc9b94a97693ac88b` |
-| `snissn/ironbird` | `snissn/ironbird#20`, merged as `5114149...` on `origin/main` |
+| `snissn/ironbird` | `snissn/ironbird#20`, merged as `51141497921b4c04dcf69d232ce014b9b3a2c02e` on `origin/main` |
 | Sweep branch commit | `7df8fbe4e7d704146b801ab9a7c9c716502e3e8e`, ancestor of `origin/main` |
 | Runner image suffix | `snissn-sdk-4948247-cosmosdb-6ddcb75-gomap-626163f` |
 
@@ -151,11 +151,27 @@ work was being counted as accepted-window runtime.
 
 ## TreeDB Counters
 
-Counter caveat: the `treedb_write_sync_count` and
-`treedb_checkpoint_count` columns in `summary.tsv` are zero because this
-debugvar capture did not expose the `treedb.public.*` keys used by the first
-report. Do not interpret those zeroes as proof that no durable work happened.
-The usable counters in this run are the command-WAL and cache counters below.
+Counter caveat: the preserved run artifact's `treedb_write_sync_count` and
+`treedb_checkpoint_count` columns are zero because the sweep script looked for
+`treedb.public.*.count_total`, while the runner emitted `calls_total` keys. Do
+not use those preserved summary columns. The preserved JSON contains the public
+counters, and the sweep script now reads `calls_total` for future rows. It also
+emits `NA` if the public counter keys are absent, while preserving numeric zero
+for present counters that actually measure zero.
+
+Recomputed public counter deltas from the preserved result JSON:
+
+| Workload | Mode | Public WriteSync calls | Public Checkpoint calls | Public Write calls |
+| --- | --- | ---: | ---: | ---: |
+| Plain send | app-only | 1,137 | 0 | 28,894 |
+| Plain send | all-DB | 5,613 | 0 | 25,255 |
+| Small multisend | app-only | 1,329 | 0 | 30,922 |
+| Small multisend | all-DB | 6,161 | 0 | 25,440 |
+
+The public checkpoint conclusion is therefore still valid for this run:
+`Checkpoint()` calls are measured zero. The public `WriteSync` summary column in
+the old `summary.tsv` is not valid, and should be read from the recomputed
+table above or from the raw result JSON.
 
 Aggregate TreeDB debug counter deltas:
 
