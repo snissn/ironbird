@@ -40,6 +40,15 @@ json_num() {
   jq -r "$1 // 0" "$2"
 }
 
+json_metric_sum_or_na() {
+  local metric="$1"
+  local file="$2"
+  jq -r --arg metric "$metric" '
+    [.results[0].load_window.treedb_stat_deltas[]?.metrics[$metric].delta] as $values |
+    if ($values | length) == 0 then "NA" else ($values | add // 0) end
+  ' "$file"
+}
+
 scenario_mode() {
   case "$1" in
     simapp-goleveldb|simapp-treedb) printf 'app-only' ;;
@@ -131,8 +140,8 @@ run_one() {
   load_phase_in_window="$(json_num '[.results[0].load_window.phase_overlaps[]? | select(.name == "run_load_test") | .in_window_seconds] | first // 0' "$out_json")"
   abci_commit_seconds="$(json_num '[.results[0].load_window.storage_signal_summary[]?.abci_commit_seconds] | max // 0' "$out_json")"
   abci_commit_count="$(json_num '[.results[0].load_window.storage_signal_summary[]?.abci_commit_count] | max // 0' "$out_json")"
-  write_sync_count="$(json_num '[.results[0].load_window.treedb_stat_deltas[]?.metrics["treedb.public.batch.write_sync.count_total"].delta] | add // 0' "$out_json")"
-  checkpoint_count="$(json_num '[.results[0].load_window.treedb_stat_deltas[]?.metrics["treedb.public.checkpoint.count_total"].delta] | add // 0' "$out_json")"
+  write_sync_count="$(json_metric_sum_or_na "treedb.public.batch.write_sync.calls_total" "$out_json")"
+  checkpoint_count="$(json_metric_sum_or_na "treedb.public.checkpoint.calls_total" "$out_json")"
 
   accepted=false
   if [[ "$reached" == "true" && "$duration_satisfied" == "true" && -z "$result_error" ]]; then
