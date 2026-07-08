@@ -16,6 +16,8 @@ PRESEED_ACCOUNTS="${PRESEED_ACCOUNTS:-100000}"
 SKIP_BUILD="${SKIP_BUILD:-false}"
 TMPDIR="${TMPDIR:-/mnt/fast4tb/tmp}"
 ACTIVE_WINDOW_PROFILE_DURATION="${ACTIVE_WINDOW_PROFILE_DURATION:-30s}"
+TREEDB_POST_LOAD_DWELL="${TREEDB_POST_LOAD_DWELL:-5m}"
+BACKEND_ORDER_MODE="${BACKEND_ORDER_MODE:-alternate}"
 
 mkdir -p "$OUT_ROOT" "$(dirname "$RUNNER")" "$TMPDIR"
 
@@ -82,6 +84,9 @@ run_one() {
   if [[ "$STOP_CATALYST_AFTER_LOAD_WINDOW" == "true" ]]; then
     runner_args+=(-stop-catalyst-after-load-window)
   fi
+  if [[ "$backend" == "treedb" && "$TREEDB_POST_LOAD_DWELL" != "0" && "$TREEDB_POST_LOAD_DWELL" != "0s" ]]; then
+    runner_args+=(-treedb-post-load-dwell "$TREEDB_POST_LOAD_DWELL")
+  fi
 
   log "running workload=$workload backend=$backend attempt=$attempt blocks=$blocks txs=$txs log=$out_dir/runner.log"
   if ! TMPDIR="$TMPDIR" "$RUNNER" "${runner_args[@]}" >"$out_dir/runner.log" 2>&1; then
@@ -144,6 +149,29 @@ row_already_accepted() {
     'NR > 1 && $1 == workload && $2 == backend && $4 == "true" { found = 1 } END { exit found ? 0 : 1 }' "$summary"
 }
 
+backend_order_for_row() {
+  local row_index="$1"
+  case "$BACKEND_ORDER_MODE" in
+    fixed)
+      printf '%s\n' "goleveldb treedb"
+      ;;
+    reverse)
+      printf '%s\n' "treedb goleveldb"
+      ;;
+    alternate)
+      if ((row_index % 2 == 0)); then
+        printf '%s\n' "treedb goleveldb"
+      else
+        printf '%s\n' "goleveldb treedb"
+      fi
+      ;;
+    *)
+      log "unknown BACKEND_ORDER_MODE=$BACKEND_ORDER_MODE; expected alternate, fixed, or reverse"
+      return 1
+      ;;
+  esac
+}
+
 # workload base_blocks txs msg contained msgs_per_tx recipients max_gas
 matrix=(
   "plain-send 400 500 MsgSend MsgSend 1 1 75000000"
@@ -151,9 +179,15 @@ matrix=(
 )
 
 failures=0
+row_index=0
 for row in "${matrix[@]}"; do
   read -r workload blocks txs msg contained msgs_per_tx recipients max_gas <<<"$row"
-  for backend in goleveldb treedb; do
+  if ! backend_order="$(backend_order_for_row "$row_index")"; then
+    failures=$((failures + 1))
+    break
+  fi
+  log "backend order for workload=$workload mode=$BACKEND_ORDER_MODE: $backend_order"
+  for backend in $backend_order; do
     if row_already_accepted "$workload" "$backend"; then
       log "skipping already accepted workload=$workload backend=$backend"
       continue
@@ -162,6 +196,7 @@ for row in "${matrix[@]}"; do
       failures=$((failures + 1))
     fi
   done
+  row_index=$((row_index + 1))
 done
 
 log "summary: $summary"
