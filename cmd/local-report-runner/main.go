@@ -98,44 +98,45 @@ type preseedConfig struct {
 }
 
 type runResult struct {
-	Scenario            scenario               `json:"scenario"`
-	StartedAt           time.Time              `json:"started_at"`
-	FinishedAt          time.Time              `json:"finished_at"`
-	WallSeconds         float64                `json:"wall_seconds"`
-	LaunchSeconds       float64                `json:"launch_seconds,omitempty"`
-	PhaseTimeline       []phaseSpan            `json:"phase_timeline,omitempty"`
-	ImageBuildCommand   []string               `json:"image_build_command,omitempty"`
-	ImageBuildLog       string                 `json:"image_build_log,omitempty"`
-	ProviderName        string                 `json:"provider_name"`
-	ContainerStats      []json.RawMessage      `json:"container_stats,omitempty"`
-	ResourceSamples     []resourceSample       `json:"resource_samples,omitempty"`
-	ResourceSummary     []resourceSummary      `json:"resource_summary,omitempty"`
-	MetricsBefore       []metricSnapshot       `json:"metrics_before,omitempty"`
-	MetricsAfter        []metricSnapshot       `json:"metrics_after,omitempty"`
-	TreeDBStatsBefore   []treeDBStatsSnapshot  `json:"treedb_stats_before,omitempty"`
-	TreeDBStatsAfter    []treeDBStatsSnapshot  `json:"treedb_stats_after,omitempty"`
-	TreeDBStatDeltas    []treeDBStatsDelta     `json:"treedb_stat_deltas,omitempty"`
-	BackendVerification *backendVerification   `json:"backend_verification,omitempty"`
-	DataSizesBefore     []dataPathSize         `json:"data_sizes_before,omitempty"`
-	DataSizesAfter      []dataPathSize         `json:"data_sizes_after,omitempty"`
-	StorageSignals      []storageSignal        `json:"storage_signal_summary,omitempty"`
-	LoadWindow          *loadWindowObservation `json:"load_window,omitempty"`
-	RuntimeBreakdown    []runtimeBreakdown     `json:"runtime_breakdown,omitempty"`
-	ContainerLogs       map[string]string      `json:"container_logs,omitempty"`
-	LoadTestResult      ctlt.LoadTestResult    `json:"load_test_result"`
-	LoadTestConfig      string                 `json:"load_test_config,omitempty"`
-	LoadTestLogs        string                 `json:"load_test_logs,omitempty"`
-	LoadTestStopped     string                 `json:"load_test_stopped,omitempty"`
-	LoadTestLogSummary  loadTestLogSummary     `json:"load_test_log_summary,omitempty"`
-	CorrectedLoadTest   *correctedLoadTest     `json:"corrected_load_test,omitempty"`
-	CommitBenchmark     *commitBenchmark       `json:"commit_benchmark,omitempty"`
-	ProfileArtifacts    []profileArtifact      `json:"profile_artifacts,omitempty"`
-	Derived             derivedMetrics         `json:"derived_metrics,omitempty"`
-	RawTxAudit          []txAudit              `json:"raw_tx_audit,omitempty"`
-	RawTxSummary        *txAuditSummary        `json:"raw_tx_summary,omitempty"`
-	RawTxAuditSkipped   string                 `json:"raw_tx_audit_skipped,omitempty"`
-	CelestiaSync        *celestiaSyncResult    `json:"celestia_sync,omitempty"`
-	Error               string                 `json:"error,omitempty"`
+	Scenario             scenario               `json:"scenario"`
+	StartedAt            time.Time              `json:"started_at"`
+	FinishedAt           time.Time              `json:"finished_at"`
+	WallSeconds          float64                `json:"wall_seconds"`
+	LaunchSeconds        float64                `json:"launch_seconds,omitempty"`
+	PhaseTimeline        []phaseSpan            `json:"phase_timeline,omitempty"`
+	ImageBuildCommand    []string               `json:"image_build_command,omitempty"`
+	ImageBuildLog        string                 `json:"image_build_log,omitempty"`
+	ProviderName         string                 `json:"provider_name"`
+	ContainerStats       []json.RawMessage      `json:"container_stats,omitempty"`
+	ResourceSamples      []resourceSample       `json:"resource_samples,omitempty"`
+	ResourceSummary      []resourceSummary      `json:"resource_summary,omitempty"`
+	MetricsBefore        []metricSnapshot       `json:"metrics_before,omitempty"`
+	MetricsAfter         []metricSnapshot       `json:"metrics_after,omitempty"`
+	TreeDBStatsBefore    []treeDBStatsSnapshot  `json:"treedb_stats_before,omitempty"`
+	TreeDBStatsAfter     []treeDBStatsSnapshot  `json:"treedb_stats_after,omitempty"`
+	TreeDBStatDeltas     []treeDBStatsDelta     `json:"treedb_stat_deltas,omitempty"`
+	TreeDBDwellSnapshots []treeDBDwellSnapshot  `json:"treedb_dwell_snapshots,omitempty"`
+	BackendVerification  *backendVerification   `json:"backend_verification,omitempty"`
+	DataSizesBefore      []dataPathSize         `json:"data_sizes_before,omitempty"`
+	DataSizesAfter       []dataPathSize         `json:"data_sizes_after,omitempty"`
+	StorageSignals       []storageSignal        `json:"storage_signal_summary,omitempty"`
+	LoadWindow           *loadWindowObservation `json:"load_window,omitempty"`
+	RuntimeBreakdown     []runtimeBreakdown     `json:"runtime_breakdown,omitempty"`
+	ContainerLogs        map[string]string      `json:"container_logs,omitempty"`
+	LoadTestResult       ctlt.LoadTestResult    `json:"load_test_result"`
+	LoadTestConfig       string                 `json:"load_test_config,omitempty"`
+	LoadTestLogs         string                 `json:"load_test_logs,omitempty"`
+	LoadTestStopped      string                 `json:"load_test_stopped,omitempty"`
+	LoadTestLogSummary   loadTestLogSummary     `json:"load_test_log_summary,omitempty"`
+	CorrectedLoadTest    *correctedLoadTest     `json:"corrected_load_test,omitempty"`
+	CommitBenchmark      *commitBenchmark       `json:"commit_benchmark,omitempty"`
+	ProfileArtifacts     []profileArtifact      `json:"profile_artifacts,omitempty"`
+	Derived              derivedMetrics         `json:"derived_metrics,omitempty"`
+	RawTxAudit           []txAudit              `json:"raw_tx_audit,omitempty"`
+	RawTxSummary         *txAuditSummary        `json:"raw_tx_summary,omitempty"`
+	RawTxAuditSkipped    string                 `json:"raw_tx_audit_skipped,omitempty"`
+	CelestiaSync         *celestiaSyncResult    `json:"celestia_sync,omitempty"`
+	Error                string                 `json:"error,omitempty"`
 }
 
 type phaseSpan struct {
@@ -227,6 +228,32 @@ type treeDBStatsDelta struct {
 	Error    string                      `json:"error,omitempty"`
 }
 
+type treeDBStatsTimelineSample struct {
+	Label          string                `json:"label,omitempty"`
+	At             time.Time             `json:"at"`
+	ElapsedSeconds float64               `json:"elapsed_seconds,omitempty"`
+	Stats          []treeDBStatsSnapshot `json:"stats,omitempty"`
+}
+
+type dataPathSizeDelta struct {
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	Before uint64 `json:"before,omitempty"`
+	After  uint64 `json:"after,omitempty"`
+	Delta  int64  `json:"delta,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type treeDBDwellSnapshot struct {
+	Label            string                `json:"label"`
+	At               time.Time             `json:"at"`
+	ElapsedSeconds   float64               `json:"elapsed_seconds,omitempty"`
+	TreeDBStats      []treeDBStatsSnapshot `json:"treedb_stats,omitempty"`
+	TreeDBStatDeltas []treeDBStatsDelta    `json:"treedb_stat_deltas,omitempty"`
+	DataSizes        []dataPathSize        `json:"data_sizes,omitempty"`
+	DataSizeDeltas   []dataPathSizeDelta   `json:"data_size_deltas,omitempty"`
+}
+
 type dataPathSize struct {
 	Name  string `json:"name"`
 	Path  string `json:"path"`
@@ -275,26 +302,58 @@ type storageSignal struct {
 }
 
 type loadWindowObservation struct {
-	TargetTransactions     int                      `json:"target_transactions,omitempty"`
-	MinimumSeconds         float64                  `json:"minimum_seconds,omitempty"`
-	DurationSatisfied      bool                     `json:"duration_satisfied"`
-	Reached                bool                     `json:"reached,omitempty"`
-	StartedAt              time.Time                `json:"started_at,omitempty"`
-	EndedAt                time.Time                `json:"ended_at,omitempty"`
-	Seconds                float64                  `json:"seconds,omitempty"`
-	IncludedTransactions   int                      `json:"included_transactions,omitempty"`
-	SuccessfulTransactions int                      `json:"successful_transactions,omitempty"`
-	AppMetricCandidates    []string                 `json:"app_metric_candidates,omitempty"`
-	MetricsBefore          []metricSnapshot         `json:"metrics_before,omitempty"`
-	MetricsAfter           []metricSnapshot         `json:"metrics_after,omitempty"`
-	MetricDeltas           []metricDeltaSnapshot    `json:"metric_deltas,omitempty"`
-	TreeDBStatsBefore      []treeDBStatsSnapshot    `json:"treedb_stats_before,omitempty"`
-	TreeDBStatsAfter       []treeDBStatsSnapshot    `json:"treedb_stats_after,omitempty"`
-	TreeDBStatDeltas       []treeDBStatsDelta       `json:"treedb_stat_deltas,omitempty"`
-	StorageSignals         []storageSignal          `json:"storage_signal_summary,omitempty"`
-	PipelineSignals        []pipelineSignal         `json:"pipeline_signal_summary,omitempty"`
-	PhaseOverlaps          []loadWindowPhaseOverlap `json:"phase_overlaps,omitempty"`
-	Error                  string                   `json:"error,omitempty"`
+	TargetTransactions     int                         `json:"target_transactions,omitempty"`
+	MinimumSeconds         float64                     `json:"minimum_seconds,omitempty"`
+	DurationSatisfied      bool                        `json:"duration_satisfied"`
+	Reached                bool                        `json:"reached,omitempty"`
+	StartedAt              time.Time                   `json:"started_at,omitempty"`
+	EndedAt                time.Time                   `json:"ended_at,omitempty"`
+	Seconds                float64                     `json:"seconds,omitempty"`
+	IncludedTransactions   int                         `json:"included_transactions,omitempty"`
+	SuccessfulTransactions int                         `json:"successful_transactions,omitempty"`
+	AppMetricCandidates    []string                    `json:"app_metric_candidates,omitempty"`
+	MetricsBefore          []metricSnapshot            `json:"metrics_before,omitempty"`
+	MetricsAfter           []metricSnapshot            `json:"metrics_after,omitempty"`
+	MetricDeltas           []metricDeltaSnapshot       `json:"metric_deltas,omitempty"`
+	TreeDBStatsBefore      []treeDBStatsSnapshot       `json:"treedb_stats_before,omitempty"`
+	TreeDBStatsAfter       []treeDBStatsSnapshot       `json:"treedb_stats_after,omitempty"`
+	TreeDBStatDeltas       []treeDBStatsDelta          `json:"treedb_stat_deltas,omitempty"`
+	TreeDBStatsTimeline    []treeDBStatsTimelineSample `json:"treedb_stats_timeline,omitempty"`
+	StorageSignals         []storageSignal             `json:"storage_signal_summary,omitempty"`
+	PipelineSignals        []pipelineSignal            `json:"pipeline_signal_summary,omitempty"`
+	Accounting             []loadWindowAccounting      `json:"load_window_accounting,omitempty"`
+	PhaseOverlaps          []loadWindowPhaseOverlap    `json:"phase_overlaps,omitempty"`
+	Error                  string                      `json:"error,omitempty"`
+}
+
+type loadWindowAccounting struct {
+	Name                              string             `json:"name"`
+	LoadWindowStart                   time.Time          `json:"load_window_start,omitempty"`
+	LoadWindowEnd                     time.Time          `json:"load_window_end,omitempty"`
+	LoadWindowSeconds                 float64            `json:"load_window_seconds,omitempty"`
+	LoadGeneratorStart                *time.Time         `json:"load_generator_start,omitempty"`
+	LoadGeneratorEnd                  *time.Time         `json:"load_generator_end,omitempty"`
+	LoadGeneratorWallSeconds          float64            `json:"load_generator_wall_seconds,omitempty"`
+	ValidatorProcessCPUSecondsDelta   float64            `json:"validator_process_cpu_seconds_delta,omitempty"`
+	ValidatorCoreEquivalent           float64            `json:"validator_core_equivalent,omitempty"`
+	ABCIObservedSumSeconds            float64            `json:"abci_observed_sum_seconds,omitempty"`
+	ABCIByMethodSeconds               map[string]float64 `json:"abci_by_method_seconds,omitempty"`
+	ABCIBusyUnionSeconds              *float64           `json:"abci_busy_union_seconds"`
+	ABCIBusyUnionMissingReason        string             `json:"abci_busy_union_missing_reason,omitempty"`
+	ABCIOverlapSeconds                *float64           `json:"abci_overlap_seconds"`
+	ABCIOverlapMissingReason          string             `json:"abci_overlap_missing_reason,omitempty"`
+	ValidatorNonABCIWallSeconds       *float64           `json:"validator_non_abci_wall_seconds"`
+	ValidatorNonABCIWallMissingReason string             `json:"validator_non_abci_wall_missing_reason,omitempty"`
+	ValidatorNonABCIApproxSeconds     float64            `json:"validator_non_abci_approx_seconds,omitempty"`
+	ValidatorNonABCIPctApprox         float64            `json:"validator_non_abci_pct_approx,omitempty"`
+	LoadgenClientWaitSeconds          *float64           `json:"loadgen_client_wait_seconds"`
+	LoadgenClientWaitMissingReason    string             `json:"loadgen_client_wait_missing_reason,omitempty"`
+	ConsensusBlockCadenceSeconds      float64            `json:"consensus_block_cadence_seconds,omitempty"`
+	MempoolBacklogSummary             string             `json:"mempool_backlog_summary,omitempty"`
+	UnaccountedResidualSeconds        float64            `json:"unaccounted_residual_seconds,omitempty"`
+	UnaccountedResidualFormula        string             `json:"unaccounted_residual_formula,omitempty"`
+	UnaccountedResidualClassification string             `json:"unaccounted_residual_classification,omitempty"`
+	Notes                             []string           `json:"notes,omitempty"`
 }
 
 type pipelineSignal struct {
@@ -653,6 +712,8 @@ func main() {
 		loadWindowMinDuration       = flag.Duration("load-window-min-duration", 0, "minimum app-metric load-window duration required for final throughput evidence; short reached windows are annotated invalid")
 		loadWindowTargetFraction    = flag.Float64("load-window-target-fraction", 1.0, "fraction of intended transactions required before the app-metric load-window target can be marked reached")
 		stopCatalystAfterLoadWindow = flag.Bool("stop-catalyst-after-load-window", false, "stop the Catalyst task once app metrics reach the load-window target, avoiding Catalyst post-load tx lookup")
+		treeDBStatsSampleInterval   = flag.Duration("treedb-stats-sample-interval", 10*time.Second, "when -app-debug-vars is enabled, sample TreeDB debug vars at this interval during the accepted load window")
+		treeDBPostLoadDwell         = flag.Duration("treedb-post-load-dwell", 0, "when >0 and TreeDB debug vars are enabled, keep TreeDB rows alive after load and capture post-dwell stats")
 		cpuprofile                  = flag.String("cpuprofile", "", "write local runner CPU profile to file")
 		memprofile                  = flag.String("memprofile", "", "write local runner heap profile to file")
 		blockprofile                = flag.String("blockprofile", "", "write local runner block profile to file")
@@ -721,6 +782,12 @@ func main() {
 	}
 	if *appActiveWindowProfileDir != "" && *appActiveWindowDuration <= 0 {
 		fatalf("-app-active-window-profile-duration must be > 0 when -app-active-window-profile-dir is set, got %s", *appActiveWindowDuration)
+	}
+	if *treeDBStatsSampleInterval <= 0 {
+		fatalf("-treedb-stats-sample-interval must be > 0, got %s", *treeDBStatsSampleInterval)
+	}
+	if *treeDBPostLoadDwell < 0 {
+		fatalf("-treedb-post-load-dwell must be >= 0, got %s", *treeDBPostLoadDwell)
 	}
 	appProfiles := appProfileCaptureConfig{
 		CPUOutDir:            *appCPUProfileDir,
@@ -814,7 +881,7 @@ func main() {
 		if sc.Runner == "celestia-sync-ab" {
 			result = runCelestiaSyncScenario(ctx, sc)
 		} else {
-			result = runScenario(ctx, workerConfig, sc, *skipBuild, *keepTestnets, *commitBenchBlocks, appProfiles, *rawTxAudit, *loadWindowDrainTimeout, *loadWindowMinDuration, *loadWindowTargetFraction, *stopCatalystAfterLoadWindow)
+			result = runScenario(ctx, workerConfig, sc, *skipBuild, *keepTestnets, *commitBenchBlocks, appProfiles, *rawTxAudit, *loadWindowDrainTimeout, *loadWindowMinDuration, *loadWindowTargetFraction, *stopCatalystAfterLoadWindow, *treeDBStatsSampleInterval, *treeDBPostLoadDwell)
 		}
 		artifact.Results = append(artifact.Results, result)
 		if result.Error != "" {
@@ -1273,7 +1340,7 @@ func launchGenesisAccounts(sc scenario) int {
 	return sc.NumWallets
 }
 
-func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appProfiles appProfileCaptureConfig, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration, loadWindowTargetFraction float64, stopCatalystAfterLoadWindow bool) (result runResult) {
+func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appProfiles appProfileCaptureConfig, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration, loadWindowTargetFraction float64, stopCatalystAfterLoadWindow bool, treeDBStatsSampleInterval, treeDBPostLoadDwell time.Duration) (result runResult) {
 	result.Scenario = sc
 	result.StartedAt = time.Now()
 	result.ProviderName = fmt.Sprintf("ib%s%s", shortChainName(sc.Name), strings.ToLower(coreutil.RandomString(4)))
@@ -1440,7 +1507,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	intendedTxs := intendedTransactions(sc)
 	if !sc.IsEVMChain && intendedTxs > 0 {
 		targetTxs := loadWindowTargetTransactions(intendedTxs, loadWindowTargetFraction)
-		windowMonitor = startLoadWindowMonitor(ctx, result.ProviderName, result.MetricsBefore, result.TreeDBStatsBefore, appProfiles.DebugVars, targetTxs, loadWindowMinDuration, 500*time.Millisecond)
+		windowMonitor = startLoadWindowMonitor(ctx, result.ProviderName, result.MetricsBefore, result.TreeDBStatsBefore, appProfiles.DebugVars, targetTxs, loadWindowMinDuration, 500*time.Millisecond, treeDBStatsSampleInterval)
 	}
 	loadActivity := &loadtest.Activity{}
 	if stopCatalystAfterLoadWindow && windowMonitor != nil {
@@ -1512,6 +1579,12 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	result.LoadTestStopped = loadResp.StoppedReason
 	result.LoadTestLogSummary = summarizeLoadTestLogs(loadResp.TaskLogs)
 	populateLoadWindowPipelineSignals(&result)
+	populateLoadWindowAccounting(&result)
+	if shouldCollectTreeDBDwell(sc, appProfiles, treeDBPostLoadDwell) {
+		endPhase = startPhase(&result, "treedb_post_load_dwell", fmt.Sprintf("duration=%s", treeDBPostLoadDwell))
+		result.TreeDBDwellSnapshots = collectTreeDBDwellSnapshots(ctx, result.ProviderName, sc, result.TreeDBStatsAfter, result.DataSizesAfter, treeDBPostLoadDwell)
+		endPhase()
+	}
 	preAuditProfileRequests, postAuditProfileRequests := splitAppProfileRequestsForRawTxAudit(appProfileRequests(sc, appProfiles))
 	endPhase = startPhase(&result, "collect_app_profiles", "")
 	result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfileRequests(ctx, launchResp.ProviderState, launchResp.ChainState, sc, preAuditProfileRequests)...)
@@ -2120,19 +2193,20 @@ func (m *loadWindowMonitor) Wait(timeout time.Duration) loadWindowObservation {
 	}
 }
 
-func startLoadWindowMonitor(ctx context.Context, providerName string, baseline []metricSnapshot, treeDBBaseline []treeDBStatsSnapshot, collectTreeDBStats bool, targetTransactions int, minDuration, interval time.Duration) *loadWindowMonitor {
+func startLoadWindowMonitor(ctx context.Context, providerName string, baseline []metricSnapshot, treeDBBaseline []treeDBStatsSnapshot, collectTreeDBStats bool, targetTransactions int, minDuration, interval, treeDBStatsSampleInterval time.Duration) *loadWindowMonitor {
 	started := time.Now()
 	if targetTransactions <= 0 {
 		done := make(chan loadWindowObservation, 1)
 		obs := loadWindowObservation{
-			TargetTransactions: targetTransactions,
-			MinimumSeconds:     minDuration.Seconds(),
-			DurationSatisfied:  minDuration <= 0,
-			StartedAt:          started,
-			EndedAt:            time.Now(),
-			MetricsBefore:      cloneMetricSnapshots(baseline),
-			TreeDBStatsBefore:  cloneTreeDBStatsSnapshots(treeDBBaseline),
-			Error:              "target transaction count is not positive",
+			TargetTransactions:  targetTransactions,
+			MinimumSeconds:      minDuration.Seconds(),
+			DurationSatisfied:   minDuration <= 0,
+			StartedAt:           started,
+			EndedAt:             time.Now(),
+			MetricsBefore:       cloneMetricSnapshots(baseline),
+			TreeDBStatsBefore:   cloneTreeDBStatsSnapshots(treeDBBaseline),
+			TreeDBStatsTimeline: initialTreeDBStatsTimeline(started, treeDBBaseline),
+			Error:               "target transaction count is not positive",
 		}
 		done <- obs
 		monitor := &loadWindowMonitor{cancel: func() {}, done: done}
@@ -2146,21 +2220,39 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		last := loadWindowObservation{
-			TargetTransactions: targetTransactions,
-			MinimumSeconds:     minDuration.Seconds(),
-			DurationSatisfied:  minDuration <= 0,
-			StartedAt:          started,
-			MetricsBefore:      cloneMetricSnapshots(baseline),
-			TreeDBStatsBefore:  cloneTreeDBStatsSnapshots(treeDBBaseline),
+			TargetTransactions:  targetTransactions,
+			MinimumSeconds:      minDuration.Seconds(),
+			DurationSatisfied:   minDuration <= 0,
+			StartedAt:           started,
+			MetricsBefore:       cloneMetricSnapshots(baseline),
+			TreeDBStatsBefore:   cloneTreeDBStatsSnapshots(treeDBBaseline),
+			TreeDBStatsTimeline: initialTreeDBStatsTimeline(started, treeDBBaseline),
 		}
-		attachTreeDBStats := func(obs loadWindowObservation) loadWindowObservation {
+		treeDBTimeline := cloneTreeDBStatsTimeline(last.TreeDBStatsTimeline)
+		lastTreeDBSampleAt := started
+		appendTreeDBStatsSample := func(label string, at time.Time) []treeDBStatsSnapshot {
+			if !collectTreeDBStats {
+				return nil
+			}
+			stats := scrapeTreeDBDebugVars(ctx, providerName)
+			treeDBTimeline = append(treeDBTimeline, treeDBStatsTimelineSample{
+				Label:          label,
+				At:             at,
+				ElapsedSeconds: at.Sub(started).Seconds(),
+				Stats:          cloneTreeDBStatsSnapshots(stats),
+			})
+			lastTreeDBSampleAt = at
+			return stats
+		}
+		attachTreeDBStats := func(obs loadWindowObservation, label string) loadWindowObservation {
 			if !collectTreeDBStats {
 				return obs
 			}
-			after := scrapeTreeDBDebugVars(ctx, providerName)
+			after := appendTreeDBStatsSample(label, obs.EndedAt)
 			obs.TreeDBStatsBefore = cloneTreeDBStatsSnapshots(treeDBBaseline)
 			obs.TreeDBStatsAfter = after
 			obs.TreeDBStatDeltas = treeDBStatsDeltaSnapshots(treeDBBaseline, after)
+			obs.TreeDBStatsTimeline = cloneTreeDBStatsTimeline(treeDBTimeline)
 			return obs
 		}
 		observe := func() loadWindowObservation {
@@ -2182,13 +2274,18 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 				MetricsAfter:           metrics,
 				MetricDeltas:           metricDeltaSnapshots(baseline, metrics),
 				StorageSignals:         signals,
+				TreeDBStatsTimeline:    cloneTreeDBStatsTimeline(treeDBTimeline),
+			}
+			if collectTreeDBStats && ended.Sub(lastTreeDBSampleAt) >= treeDBStatsSampleInterval {
+				appendTreeDBStatsSample("interval", ended)
+				obs.TreeDBStatsTimeline = cloneTreeDBStatsTimeline(treeDBTimeline)
 			}
 			if ok && successful >= targetTransactions {
 				obs.Reached = true
 				if !obs.DurationSatisfied {
 					obs.Error = fmt.Sprintf("load window reached in %.3fs, below minimum duration %s; increase offered workload", obs.Seconds, minDuration)
 				}
-				obs = attachTreeDBStats(obs)
+				obs = attachTreeDBStats(obs, "load_end")
 			}
 			return obs
 		}
@@ -2205,7 +2302,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 				if last.Error == "" {
 					last.Error = monitorCtx.Err().Error()
 				}
-				last = attachTreeDBStats(last)
+				last = attachTreeDBStats(last, "monitor_stop")
 				monitor.setLast(last)
 				done <- last
 				return
@@ -3490,6 +3587,33 @@ func cloneTreeDBStatsSnapshots(snapshots []treeDBStatsSnapshot) []treeDBStatsSna
 	return out
 }
 
+func initialTreeDBStatsTimeline(started time.Time, stats []treeDBStatsSnapshot) []treeDBStatsTimelineSample {
+	if len(stats) == 0 {
+		return nil
+	}
+	return []treeDBStatsTimelineSample{{
+		Label: "load_start_proxy",
+		At:    started,
+		Stats: cloneTreeDBStatsSnapshots(stats),
+	}}
+}
+
+func cloneTreeDBStatsTimeline(samples []treeDBStatsTimelineSample) []treeDBStatsTimelineSample {
+	if len(samples) == 0 {
+		return nil
+	}
+	out := make([]treeDBStatsTimelineSample, 0, len(samples))
+	for _, sample := range samples {
+		out = append(out, treeDBStatsTimelineSample{
+			Label:          sample.Label,
+			At:             sample.At,
+			ElapsedSeconds: sample.ElapsedSeconds,
+			Stats:          cloneTreeDBStatsSnapshots(sample.Stats),
+		})
+	}
+	return out
+}
+
 func metricDeltaSnapshots(before, after []metricSnapshot) []metricDeltaSnapshot {
 	beforeByName := metricSnapshotsByName(before)
 	afterByName := metricSnapshotsByName(after)
@@ -3785,6 +3909,100 @@ func pathSizesForName(sizes []dataPathSize, name string) map[string]uint64 {
 	return out
 }
 
+func shouldCollectTreeDBDwell(sc scenario, profiles appProfileCaptureConfig, dwell time.Duration) bool {
+	if dwell <= 0 || !profiles.DebugVars {
+		return false
+	}
+	return sc.AppDBBackend == "treedb" || sc.NodeDBBackend == "treedb"
+}
+
+func collectTreeDBDwellSnapshots(ctx context.Context, providerName string, sc scenario, loadEndStats []treeDBStatsSnapshot, loadEndSizes []dataPathSize, dwell time.Duration) []treeDBDwellSnapshot {
+	started := time.Now()
+	snapshots := []treeDBDwellSnapshot{{
+		Label:            "load_end",
+		At:               started,
+		TreeDBStats:      cloneTreeDBStatsSnapshots(loadEndStats),
+		TreeDBStatDeltas: treeDBStatsDeltaSnapshots(loadEndStats, loadEndStats),
+		DataSizes:        cloneDataPathSizes(loadEndSizes),
+		DataSizeDeltas:   dataPathSizeDeltas(loadEndSizes, loadEndSizes),
+	}}
+	time.Sleep(dwell)
+	ended := time.Now()
+	postStats := scrapeTreeDBDebugVars(ctx, providerName)
+	postSizes := collectDataSizes(ctx, providerName, sc)
+	snapshots = append(snapshots, treeDBDwellSnapshot{
+		Label:            "post_dwell",
+		At:               ended,
+		ElapsedSeconds:   ended.Sub(started).Seconds(),
+		TreeDBStats:      cloneTreeDBStatsSnapshots(postStats),
+		TreeDBStatDeltas: treeDBStatsDeltaSnapshots(loadEndStats, postStats),
+		DataSizes:        cloneDataPathSizes(postSizes),
+		DataSizeDeltas:   dataPathSizeDeltas(loadEndSizes, postSizes),
+	})
+	return snapshots
+}
+
+func cloneDataPathSizes(sizes []dataPathSize) []dataPathSize {
+	if len(sizes) == 0 {
+		return nil
+	}
+	out := make([]dataPathSize, len(sizes))
+	copy(out, sizes)
+	return out
+}
+
+func dataPathSizeDeltas(before, after []dataPathSize) []dataPathSizeDelta {
+	type pathKey struct {
+		name string
+		path string
+	}
+	beforeByKey := map[pathKey]dataPathSize{}
+	afterByKey := map[pathKey]dataPathSize{}
+	keySet := map[pathKey]struct{}{}
+	for _, size := range before {
+		key := pathKey{name: size.Name, path: size.Path}
+		beforeByKey[key] = size
+		keySet[key] = struct{}{}
+	}
+	for _, size := range after {
+		key := pathKey{name: size.Name, path: size.Path}
+		afterByKey[key] = size
+		keySet[key] = struct{}{}
+	}
+	keys := make([]pathKey, 0, len(keySet))
+	for key := range keySet {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].name == keys[j].name {
+			return keys[i].path < keys[j].path
+		}
+		return keys[i].name < keys[j].name
+	})
+	rows := make([]dataPathSizeDelta, 0, len(keys))
+	for _, key := range keys {
+		b, bok := beforeByKey[key]
+		a, aok := afterByKey[key]
+		row := dataPathSizeDelta{Name: key.name, Path: key.path}
+		if bok {
+			row.Before = b.Bytes
+			row.Error = appendSnapshotError(row.Error, "before", b.Error)
+		}
+		if aok {
+			row.After = a.Bytes
+			row.Error = appendSnapshotError(row.Error, "after", a.Error)
+		}
+		if bok && aok && b.Error == "" && a.Error == "" {
+			row.Delta = int64(a.Bytes) - int64(b.Bytes)
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	return rows
+}
+
 func summarizeRuntimeBreakdown(result runResult) []runtimeBreakdown {
 	if len(result.StorageSignals) == 0 {
 		return nil
@@ -3878,6 +4096,91 @@ func populateLoadWindowPipelineSignals(result *runResult) {
 		return
 	}
 	result.LoadWindow.PipelineSignals = summarizePipelineSignals(*result.LoadWindow, result.LoadTestLogSummary)
+}
+
+func populateLoadWindowAccounting(result *runResult) {
+	if result == nil || result.LoadWindow == nil {
+		return
+	}
+	result.LoadWindow.Accounting = summarizeLoadWindowAccounting(*result, *result.LoadWindow)
+}
+
+func summarizeLoadWindowAccounting(result runResult, obs loadWindowObservation) []loadWindowAccounting {
+	if len(obs.StorageSignals) == 0 {
+		return nil
+	}
+	var loadGeneratorStart, loadGeneratorEnd *time.Time
+	var loadGeneratorWallSeconds float64
+	if span, ok := phaseSpanByName(result.PhaseTimeline, "run_load_test"); ok {
+		started := span.Started
+		ended := span.Ended
+		loadGeneratorStart = &started
+		loadGeneratorEnd = &ended
+		loadGeneratorWallSeconds = span.Seconds
+	}
+	pipelineByName := map[string]pipelineSignal{}
+	for _, signal := range obs.PipelineSignals {
+		pipelineByName[signal.Name] = signal
+	}
+	rows := make([]loadWindowAccounting, 0, len(obs.StorageSignals))
+	for _, signal := range obs.StorageSignals {
+		row := loadWindowAccounting{
+			Name:                            signal.Name,
+			LoadWindowStart:                 obs.StartedAt,
+			LoadWindowEnd:                   obs.EndedAt,
+			LoadWindowSeconds:               obs.Seconds,
+			LoadGeneratorStart:              loadGeneratorStart,
+			LoadGeneratorEnd:                loadGeneratorEnd,
+			LoadGeneratorWallSeconds:        loadGeneratorWallSeconds,
+			ValidatorProcessCPUSecondsDelta: signal.ProcessCPUSecondsDelta,
+			ABCIObservedSumSeconds:          signal.ABCIObservedSeconds,
+			ABCIByMethodSeconds: map[string]float64{
+				"commit":           signal.ABCICommitSeconds,
+				"finalize_block":   signal.ABCIFinalizeBlockSeconds,
+				"check_tx":         signal.ABCICheckTxSeconds,
+				"prepare_proposal": signal.ABCIPrepareProposalSeconds,
+				"process_proposal": signal.ABCIProcessProposalSeconds,
+				"query":            signal.ABCIQuerySeconds,
+				"flush":            signal.ABCIFlushSeconds,
+				"other":            signal.ABCIOtherSeconds,
+			},
+			ABCIBusyUnionMissingReason:        "ABCI method interval start/end samples are not exported by this harness",
+			ABCIOverlapMissingReason:          "ABCI busy union unavailable; overlap cannot be computed from summed method counters",
+			ValidatorNonABCIWallMissingReason: "exact non-ABCI wall time requires ABCI busy union intervals",
+			ValidatorNonABCIApproxSeconds:     nonNegative(obs.Seconds - signal.ABCIObservedSeconds),
+			LoadgenClientWaitMissingReason:    "Catalyst aggregate logs do not export per-client wait or broadcast latency",
+			UnaccountedResidualFormula:        "max(0, load_window_seconds - abci_observed_sum_seconds)",
+			UnaccountedResidualClassification: "approximate_sum_based",
+		}
+		row.UnaccountedResidualSeconds = row.ValidatorNonABCIApproxSeconds
+		if obs.Seconds > 0 {
+			row.ValidatorCoreEquivalent = signal.ProcessCPUSecondsDelta / obs.Seconds
+			row.ValidatorNonABCIPctApprox = 100 * row.ValidatorNonABCIApproxSeconds / obs.Seconds
+		}
+		if signal.ConsensusBlockIntervalCount > 0 {
+			row.ConsensusBlockCadenceSeconds = signal.ConsensusBlockIntervalSeconds / float64(signal.ConsensusBlockIntervalCount)
+		}
+		if pipeline, ok := pipelineByName[signal.Name]; ok {
+			row.MempoolBacklogSummary = fmt.Sprintf("submitted=%d included=%d successful=%d send_gap=%d failed_send=%d", pipeline.SubmittedTransactions, pipeline.IncludedTransactions, pipeline.SuccessfulTransactions, pipeline.SubmittedMinusIncluded, pipeline.FailedSendTotal)
+		} else {
+			row.MempoolBacklogSummary = "pipeline summary unavailable"
+		}
+		if signal.ABCIObservedSeconds > obs.Seconds && obs.Seconds > 0 {
+			row.Notes = append(row.Notes, "ABCI summed method seconds exceed wall seconds; methods may overlap or include concurrent connections")
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	return rows
+}
+
+func phaseSpanByName(spans []phaseSpan, name string) (phaseSpan, bool) {
+	for _, span := range spans {
+		if span.Name == name {
+			return span, true
+		}
+	}
+	return phaseSpan{}, false
 }
 
 func summarizePipelineSignals(obs loadWindowObservation, logs loadTestLogSummary) []pipelineSignal {
@@ -4624,6 +4927,7 @@ func renderReportMarkdown(artifact reportArtifact) string {
 	for _, result := range artifact.Results {
 		writeRuntimeBreakdownMarkdown(&b, result)
 		writeAcceptedWindowMarkdown(&b, result)
+		writeTreeDBDwellMarkdown(&b, result)
 		writeProfileArtifactsMarkdown(&b, result)
 	}
 	return b.String()
@@ -4689,7 +4993,9 @@ func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
 		b.WriteString("\n\n")
 	}
 	writeLoadWindowPhaseOverlapsMarkdown(b, obs.PhaseOverlaps)
+	writeLoadWindowAccountingMarkdown(b, obs.Accounting)
 	writePipelineSignalsMarkdown(b, obs.PipelineSignals)
+	writeTreeDBStatsTimelineMarkdown(b, obs.TreeDBStatsTimeline)
 
 	rows := metricDeltaRows(obs.MetricDeltas)
 	errors := metricDeltaErrors(obs.MetricDeltas)
@@ -4825,6 +5131,87 @@ func writeLoadWindowPhaseOverlapsMarkdown(b *strings.Builder, rows []loadWindowP
 	b.WriteByte('\n')
 }
 
+func writeLoadWindowAccountingMarkdown(b *strings.Builder, rows []loadWindowAccounting) {
+	if len(rows) == 0 {
+		return
+	}
+	b.WriteString("### Accepted-Window Non-ABCI Accounting\n\n")
+	b.WriteString("Exact non-ABCI wall time requires ABCI interval union data. When intervals are unavailable, this table reports the explicit residual formula used for the approximate value.\n\n")
+	b.WriteString("| Node | Window s | Loadgen s | ABCI sum s | Commit s | Finalize s | CheckTx s | Approx non-ABCI s | Approx non-ABCI % | Process CPU s | Core equiv | Block cadence s | Missing exact fields | Residual formula |\n")
+	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n")
+	for _, row := range rows {
+		missing := accountingMissingSummary(row)
+		b.WriteString("| ")
+		b.WriteString(mdCell(row.Name))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.LoadWindowSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.LoadGeneratorWallSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ABCIObservedSumSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ABCIByMethodSeconds["commit"]))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ABCIByMethodSeconds["finalize_block"]))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ABCIByMethodSeconds["check_tx"]))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ValidatorNonABCIApproxSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ValidatorNonABCIPctApprox))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ValidatorProcessCPUSecondsDelta))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ValidatorCoreEquivalent))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ConsensusBlockCadenceSeconds))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(missing))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(row.UnaccountedResidualFormula))
+		b.WriteString(" |\n")
+	}
+	b.WriteByte('\n')
+}
+
+func accountingMissingSummary(row loadWindowAccounting) string {
+	var parts []string
+	if row.ABCIBusyUnionSeconds == nil && row.ABCIBusyUnionMissingReason != "" {
+		parts = append(parts, "abci_busy_union: "+row.ABCIBusyUnionMissingReason)
+	}
+	if row.ABCIOverlapSeconds == nil && row.ABCIOverlapMissingReason != "" {
+		parts = append(parts, "abci_overlap: "+row.ABCIOverlapMissingReason)
+	}
+	if row.ValidatorNonABCIWallSeconds == nil && row.ValidatorNonABCIWallMissingReason != "" {
+		parts = append(parts, "non_abci_wall: "+row.ValidatorNonABCIWallMissingReason)
+	}
+	if row.LoadgenClientWaitSeconds == nil && row.LoadgenClientWaitMissingReason != "" {
+		parts = append(parts, "loadgen_wait: "+row.LoadgenClientWaitMissingReason)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func writeTreeDBStatsTimelineMarkdown(b *strings.Builder, samples []treeDBStatsTimelineSample) {
+	if len(samples) == 0 {
+		return
+	}
+	b.WriteString("### Accepted-Window TreeDB Stats Timeline\n\n")
+	b.WriteString("| Label | At | Elapsed s | Snapshots |\n")
+	b.WriteString("| --- | --- | ---: | ---: |\n")
+	for _, sample := range samples {
+		b.WriteString("| ")
+		b.WriteString(mdCell(sample.Label))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(sample.At.UTC().Format(time.RFC3339Nano)))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(sample.ElapsedSeconds))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(len(sample.Stats)))
+		b.WriteString(" |\n")
+	}
+	b.WriteByte('\n')
+}
+
 func writePipelineSignalsMarkdown(b *strings.Builder, rows []pipelineSignal) {
 	if len(rows) == 0 {
 		return
@@ -4867,6 +5254,58 @@ func writePipelineSignalsMarkdown(b *strings.Builder, rows []pipelineSignal) {
 		b.WriteString(" |\n")
 	}
 	b.WriteByte('\n')
+}
+
+func writeTreeDBDwellMarkdown(b *strings.Builder, result runResult) {
+	if len(result.TreeDBDwellSnapshots) == 0 {
+		return
+	}
+	b.WriteString("## ")
+	b.WriteString(mdCell(result.Scenario.Name))
+	b.WriteString(" TreeDB Post-Load Dwell\n\n")
+	b.WriteString("| Snapshot | Elapsed s | TreeDB snapshots | Data paths |\n")
+	b.WriteString("| --- | ---: | ---: | ---: |\n")
+	for _, snapshot := range result.TreeDBDwellSnapshots {
+		b.WriteString("| ")
+		b.WriteString(mdCell(snapshot.Label))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(snapshot.ElapsedSeconds))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(len(snapshot.TreeDBStats)))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(len(snapshot.DataSizes)))
+		b.WriteString(" |\n")
+	}
+	b.WriteByte('\n')
+	var rows []dataPathSizeDelta
+	for _, snapshot := range result.TreeDBDwellSnapshots {
+		if snapshot.Label != "post_dwell" {
+			continue
+		}
+		rows = append(rows, snapshot.DataSizeDeltas...)
+	}
+	if len(rows) > 0 {
+		b.WriteString("### TreeDB Dwell Data Size Deltas\n\n")
+		b.WriteString("| Container | Path | Before | After | Delta |\n")
+		b.WriteString("| --- | --- | ---: | ---: | ---: |\n")
+		for _, row := range rows {
+			if row.Error != "" {
+				continue
+			}
+			b.WriteString("| ")
+			b.WriteString(mdCell(row.Name))
+			b.WriteString(" | ")
+			b.WriteString(mdCell(row.Path))
+			b.WriteString(" | ")
+			b.WriteString(strconv.FormatUint(row.Before, 10))
+			b.WriteString(" | ")
+			b.WriteString(strconv.FormatUint(row.After, 10))
+			b.WriteString(" | ")
+			b.WriteString(strconv.FormatInt(row.Delta, 10))
+			b.WriteString(" |\n")
+		}
+		b.WriteByte('\n')
+	}
 }
 
 func writeProfileArtifactsMarkdown(b *strings.Builder, result runResult) {
