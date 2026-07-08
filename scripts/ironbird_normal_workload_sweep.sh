@@ -9,6 +9,7 @@ LOAD_WINDOW_TARGET_FRACTION="${LOAD_WINDOW_TARGET_FRACTION:-0.995}"
 DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-5m}"
 STOP_CATALYST_AFTER_LOAD_WINDOW="${STOP_CATALYST_AFTER_LOAD_WINDOW:-true}"
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
+WORKLOADS="${WORKLOADS:-}"
 VALIDATORS="${VALIDATORS:-1}"
 NODES="${NODES:-0}"
 WALLETS="${WALLETS:-5000}"
@@ -35,6 +36,16 @@ json_bool() {
 
 json_num() {
   jq -r "$1 // 0" "$2"
+}
+
+want_workload() {
+  local workload="$1"
+  if [[ -z "$WORKLOADS" ]]; then
+    return 0
+  fi
+  local normalized
+  normalized=" ${WORKLOADS//,/ } "
+  [[ "$normalized" == *" $workload "* ]]
 }
 
 run_one() {
@@ -143,6 +154,10 @@ matrix=(
 failures=0
 for row in "${matrix[@]}"; do
   read -r workload blocks txs msg contained msgs_per_tx recipients max_gas <<<"$row"
+  if ! want_workload "$workload"; then
+    log "skipping workload=$workload due to WORKLOADS=$WORKLOADS"
+    continue
+  fi
   for backend in goleveldb treedb; do
     if ! run_until_accepted "$workload" "$backend" "$blocks" "$txs" "$msg" "$contained" "$msgs_per_tx" "$recipients" "$max_gas"; then
       failures=$((failures + 1))
