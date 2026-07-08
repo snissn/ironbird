@@ -182,7 +182,10 @@ failures=0
 row_index=0
 for row in "${matrix[@]}"; do
   read -r workload blocks txs msg contained msgs_per_tx recipients max_gas <<<"$row"
-  backend_order="$(backend_order_for_row "$row_index")"
+  if ! backend_order="$(backend_order_for_row "$row_index")"; then
+    failures=$((failures + 1))
+    break
+  fi
   log "backend order for workload=$workload mode=$BACKEND_ORDER_MODE: $backend_order"
   for backend in $backend_order; do
     if row_already_accepted "$workload" "$backend"; then
