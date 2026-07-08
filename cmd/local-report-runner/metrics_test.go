@@ -287,6 +287,74 @@ func TestSummarizePipelineSignalsPromotesAcceptedWindowCounters(t *testing.T) {
 	}
 }
 
+func TestSummarizeLoadWindowAccountingMarksApproximateResidual(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	result := runResult{
+		PhaseTimeline: []phaseSpan{{
+			Name:    "run_load_test",
+			Started: base.Add(-time.Second),
+			Ended:   base.Add(11 * time.Second),
+			Seconds: 12,
+		}},
+	}
+	obs := loadWindowObservation{
+		StartedAt: base,
+		EndedAt:   base.Add(10 * time.Second),
+		Seconds:   10,
+		StorageSignals: []storageSignal{{
+			Name:                          "validator-0",
+			ABCIObservedSeconds:           3,
+			ABCICommitSeconds:             1,
+			ABCIFinalizeBlockSeconds:      1.25,
+			ABCICheckTxSeconds:            0.5,
+			ProcessCPUSecondsDelta:        25,
+			ConsensusBlockIntervalSeconds: 20,
+			ConsensusBlockIntervalCount:   10,
+		}},
+		PipelineSignals: []pipelineSignal{{
+			Name:                   "validator-0",
+			SubmittedTransactions:  1050,
+			IncludedTransactions:   1000,
+			SuccessfulTransactions: 1000,
+			SubmittedMinusIncluded: 50,
+			FailedSendTotal:        2,
+		}},
+	}
+
+	rows := summarizeLoadWindowAccounting(result, obs)
+	if len(rows) != 1 {
+		t.Fatalf("accounting rows len=%d want 1", len(rows))
+	}
+	row := rows[0]
+	if row.ValidatorNonABCIApproxSeconds != 7 {
+		t.Fatalf("approx non-ABCI = %v, want 7", row.ValidatorNonABCIApproxSeconds)
+	}
+	if row.ValidatorCoreEquivalent != 2.5 {
+		t.Fatalf("core equivalent = %v, want 2.5", row.ValidatorCoreEquivalent)
+	}
+	if row.ConsensusBlockCadenceSeconds != 2 {
+		t.Fatalf("block cadence = %v, want 2", row.ConsensusBlockCadenceSeconds)
+	}
+	if row.ABCIBusyUnionSeconds != nil || row.ABCIBusyUnionMissingReason == "" {
+		t.Fatalf("busy union missing state = %v reason=%q", row.ABCIBusyUnionSeconds, row.ABCIBusyUnionMissingReason)
+	}
+	payload, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("marshal accounting: %v", err)
+	}
+	for _, want := range []string{
+		`"abci_busy_union_seconds":null`,
+		`"validator_non_abci_wall_seconds":null`,
+		`"loadgen_client_wait_seconds":null`,
+		`"unaccounted_residual_formula":"max(0, load_window_seconds - abci_observed_sum_seconds)"`,
+		`"mempool_backlog_summary":"submitted=1050 included=1000 successful=1000 send_gap=50 failed_send=2"`,
+	} {
+		if !strings.Contains(string(payload), want) {
+			t.Fatalf("payload missing %s: %s", want, payload)
+		}
+	}
+}
+
 func TestMetricDeltaSnapshotsPreserveBeforeAfterDelta(t *testing.T) {
 	before := []metricSnapshot{{
 		Name: "validator-0",
@@ -635,6 +703,84 @@ func TestRenderReportMarkdownIncludesTreeDBDeltasWithoutPrometheusRows(t *testin
 	}
 	if strings.Contains(md, "No accepted-window metric deltas were recorded.") {
 		t.Fatalf("markdown hid TreeDB deltas as no-delta message:\n%s", md)
+	}
+}
+
+func TestRenderReportMarkdownIncludesAccountingTimelineAndDwell(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	artifact := reportArtifact{
+		GeneratedAt: base,
+		Results: []runResult{{
+			Scenario: scenario{Name: "plain-send-treedb"},
+			LoadWindow: &loadWindowObservation{
+				Reached:                true,
+				DurationSatisfied:      true,
+				StartedAt:              base,
+				EndedAt:                base.Add(10 * time.Second),
+				Seconds:                10,
+				IncludedTransactions:   1000,
+				SuccessfulTransactions: 1000,
+				TargetTransactions:     1000,
+				Accounting: []loadWindowAccounting{{
+					Name:                              "validator-0",
+					LoadWindowSeconds:                 10,
+					LoadGeneratorWallSeconds:          11,
+					ABCIObservedSumSeconds:            3,
+					ABCIByMethodSeconds:               map[string]float64{"commit": 1, "finalize_block": 1.25, "check_tx": 0.5},
+					ValidatorNonABCIApproxSeconds:     7,
+					ValidatorNonABCIPctApprox:         70,
+					ValidatorProcessCPUSecondsDelta:   25,
+					ValidatorCoreEquivalent:           2.5,
+					ConsensusBlockCadenceSeconds:      2,
+					ABCIBusyUnionMissingReason:        "ABCI intervals unavailable",
+					ABCIOverlapMissingReason:          "ABCI intervals unavailable",
+					ValidatorNonABCIWallMissingReason: "ABCI intervals unavailable",
+					LoadgenClientWaitMissingReason:    "Catalyst wait unavailable",
+					UnaccountedResidualFormula:        "max(0, load_window_seconds - abci_observed_sum_seconds)",
+				}},
+				TreeDBStatsTimeline: []treeDBStatsTimelineSample{{
+					Label:          "load_start_proxy",
+					At:             base,
+					ElapsedSeconds: 0,
+					Stats:          []treeDBStatsSnapshot{{Name: "validator-0", Store: "application.db"}},
+				}, {
+					Label:          "load_end",
+					At:             base.Add(10 * time.Second),
+					ElapsedSeconds: 10,
+					Stats:          []treeDBStatsSnapshot{{Name: "validator-0", Store: "application.db"}},
+				}},
+				MetricDeltas: []metricDeltaSnapshot{{
+					Name:    "validator-0",
+					Metrics: map[string]metricDeltaValue{"tx_count": {Before: 0, After: 1000, Delta: 1000}},
+				}},
+			},
+			TreeDBDwellSnapshots: []treeDBDwellSnapshot{{
+				Label:     "load_end",
+				At:        base.Add(10 * time.Second),
+				DataSizes: []dataPathSize{{Name: "validator-0", Path: "/simd/data", Bytes: 100}},
+			}, {
+				Label:          "post_dwell",
+				At:             base.Add(5*time.Minute + 10*time.Second),
+				ElapsedSeconds: 300,
+				DataSizes:      []dataPathSize{{Name: "validator-0", Path: "/simd/data", Bytes: 90}},
+				DataSizeDeltas: []dataPathSizeDelta{{Name: "validator-0", Path: "/simd/data", Before: 100, After: 90, Delta: -10}},
+			}},
+		}},
+	}
+
+	md := renderReportMarkdown(artifact)
+	for _, want := range []string{
+		"### Accepted-Window Non-ABCI Accounting",
+		"| validator-0 | 10 | 11 | 3 | 1 | 1.25 | 0.5 | 7 | 70 | 25 | 2.5 | 2 |",
+		"### Accepted-Window TreeDB Stats Timeline",
+		"| load_end | 2026-07-08T12:00:10Z | 10 | 1 |",
+		"## plain-send-treedb TreeDB Post-Load Dwell",
+		"### TreeDB Dwell Data Size Deltas",
+		"| validator-0 | /simd/data | 100 | 90 | -10 |",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, md)
+		}
 	}
 }
 
