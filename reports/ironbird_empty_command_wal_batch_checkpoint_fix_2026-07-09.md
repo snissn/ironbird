@@ -93,7 +93,7 @@ The LevelDB and pre-fix TreeDB rows are the preserved plain-send rows from the
 same exact-span instrumentation pass. The candidate is the accepted latest-head
 run above.
 
-| Metric | goleveldb baseline | TreeDB `2182e84` | TreeDB `138e6df` |
+| Metric | goleveldb baseline | TreeDB `2182e84` | TreeDB `9cd9c68` (benchmarked PR head `138e6df`) |
 | --- | ---: | ---: | ---: |
 | Successful transactions | 199,323 | 199,630 | 223,995 |
 | Load-window seconds | 300.540 | 337.525 | 315.024 |
@@ -117,9 +117,13 @@ cadence and mempool scheduling vary between runs.
 
 ## Accepted-Window Attribution
 
-The final candidate processed 1,170 measured blocks at 191.61 transactions per
-block. The validator used 512.39 process-CPU seconds during the 315.024-second
-window, or 1.63 core equivalents.
+The final candidate recorded 1,170 ABCI `FinalizeBlock`/`Commit` calls and 1,169
+consensus block-interval observations in the accepted metric window. Its
+223,993 consensus transaction delta is 191.45 transactions per finalized block;
+the accepted app metric reports 223,995 successful transactions. The 387.57 ms
+mean block interval uses the 1,169 interval observations. The validator used
+512.39 process-CPU seconds during the 315.024-second window, or 1.63 core
+equivalents.
 
 The current ABCI activity intervals are scrape-bounded, not event-exact. A
 method counter change marks the entire scrape interval as active. Therefore the

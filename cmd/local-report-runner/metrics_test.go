@@ -334,8 +334,8 @@ func TestSummarizePipelineSignalsPromotesAcceptedWindowCounters(t *testing.T) {
 			ABCIFinalizeBlockCount:        60,
 			ABCICommitSeconds:             3,
 			ABCICommitCount:               60,
-			ConsensusBlockIntervalSeconds: 120,
-			ConsensusBlockIntervalCount:   60,
+			ConsensusBlockIntervalSeconds: 118,
+			ConsensusBlockIntervalCount:   59,
 			ConsensusTotalTxsDelta:        60000,
 			MempoolSuccessfulTxsDelta:     59000,
 			SDKTxCountDelta:               60000,
@@ -561,8 +561,8 @@ func TestSummarizeCadenceDiagnosticsSeparatesBlockStagesFromResidual(t *testing.
 			StateBlockProcessingCount:     10,
 			TxIndexIndexedTxsDelta:        1000,
 			MempoolSuccessfulTxsDelta:     1000,
-			ConsensusBlockIntervalSeconds: 10,
-			ConsensusBlockIntervalCount:   10,
+			ConsensusBlockIntervalSeconds: 9,
+			ConsensusBlockIntervalCount:   9,
 			ConsensusTotalTxsDelta:        1000,
 			ExactCommitStageTimings: []cadenceStage{
 				{Name: "consensus commit", Class: "consensus_commit", Source: "cometbft_consensus_commit_finalize_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 2, Count: 10},
@@ -591,8 +591,8 @@ func TestSummarizeCadenceDiagnosticsSeparatesBlockStagesFromResidual(t *testing.
 			Name:                          "validator-0",
 			AvgTxsPerConsensusBlock:       100,
 			AvgBlockIntervalSeconds:       1,
-			ConsensusBlockIntervalCount:   10,
-			ConsensusBlockIntervalSeconds: 10,
+			ConsensusBlockIntervalCount:   9,
+			ConsensusBlockIntervalSeconds: 9,
 		}},
 	}
 

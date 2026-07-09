@@ -5004,7 +5004,7 @@ func summarizeCadenceDiagnostics(obs loadWindowObservation, logs loadTestLogSumm
 			},
 		}
 		row.BlockCount = cadenceBlockCount(signal, pipeline)
-		row.AvgBlockIntervalSeconds = cadenceAvgBlockInterval(signal, pipeline, row.BlockCount)
+		row.AvgBlockIntervalSeconds = cadenceAvgBlockInterval(signal, pipeline)
 		row.AvgTxsPerBlock = cadenceAvgTxsPerBlock(obs, signal, pipeline, row.BlockCount)
 		row.Stages = cadenceStages(signal, row.BlockCount)
 		row.Stages = append(row.Stages, metricAttributionCadenceStages(signal, row.BlockCount)...)
@@ -5130,23 +5130,27 @@ func hasTreeDBTimingForStore(snapshots []treeDBStatsDelta, node, store string) b
 
 func cadenceBlockCount(signal storageSignal, pipeline pipelineSignal) int {
 	switch {
+	case signal.ABCIFinalizeBlockCount > 0:
+		return signal.ABCIFinalizeBlockCount
+	case signal.ABCICommitCount > 0:
+		return signal.ABCICommitCount
+	case pipeline.ABCIFinalizeBlockCount > 0:
+		return pipeline.ABCIFinalizeBlockCount
+	case pipeline.ABCICommitCount > 0:
+		return pipeline.ABCICommitCount
 	case signal.ConsensusBlockIntervalCount > 0:
 		return signal.ConsensusBlockIntervalCount
 	case pipeline.ConsensusBlockIntervalCount > 0:
 		return pipeline.ConsensusBlockIntervalCount
-	case signal.ABCICommitCount > 0:
-		return signal.ABCICommitCount
-	case signal.ABCIFinalizeBlockCount > 0:
-		return signal.ABCIFinalizeBlockCount
 	default:
 		return 0
 	}
 }
 
-func cadenceAvgBlockInterval(signal storageSignal, pipeline pipelineSignal, blockCount int) float64 {
+func cadenceAvgBlockInterval(signal storageSignal, pipeline pipelineSignal) float64 {
 	switch {
-	case blockCount > 0 && signal.ConsensusBlockIntervalSeconds > 0:
-		return signal.ConsensusBlockIntervalSeconds / float64(blockCount)
+	case signal.ConsensusBlockIntervalCount > 0 && signal.ConsensusBlockIntervalSeconds > 0:
+		return signal.ConsensusBlockIntervalSeconds / float64(signal.ConsensusBlockIntervalCount)
 	case pipeline.AvgBlockIntervalSeconds > 0:
 		return pipeline.AvgBlockIntervalSeconds
 	default:
@@ -5521,6 +5525,13 @@ func summarizePipelineSignals(obs loadWindowObservation, logs loadTestLogSummary
 		}
 		if row.ConsensusBlockIntervalCount > 0 {
 			row.AvgBlockIntervalSeconds = row.ConsensusBlockIntervalSeconds / float64(row.ConsensusBlockIntervalCount)
+		}
+		switch {
+		case row.ABCIFinalizeBlockCount > 0:
+			row.AvgTxsPerConsensusBlock = signal.ConsensusTotalTxsDelta / float64(row.ABCIFinalizeBlockCount)
+		case row.ABCICommitCount > 0:
+			row.AvgTxsPerConsensusBlock = signal.ConsensusTotalTxsDelta / float64(row.ABCICommitCount)
+		case row.ConsensusBlockIntervalCount > 0:
 			row.AvgTxsPerConsensusBlock = signal.ConsensusTotalTxsDelta / float64(row.ConsensusBlockIntervalCount)
 		}
 		if logs.CatalystTiming != nil {
