@@ -1,4 +1,4 @@
-# Ironbird Exact Non-ABCI Attribution Report: gomap 2182e84
+# Ironbird Bounded Non-ABCI Attribution Report: gomap 2182e84
 
 Date: 2026-07-09 UTC / 2026-07-08 HST
 
@@ -6,17 +6,20 @@ This report closes `snissn/ironbird#31`, the report node under the exact
 non-ABCI attribution graph `snissn/ironbird#28`. It uses the interval model
 from `#29` and the bounded ABCI scrape-sample collection from `#30` to rerun
 the low-fanout Ironbird matrix on the merged Ironbird head and the pinned gomap
-`2182e84` dependency.
+`2182e84` dependency. The important result is that the current bounded-sample
+source is useful but not sufficient for true exact non-ABCI wall-time
+attribution.
 
 ## Headline
 
-The new instrumentation answers the immediate non-ABCI question: the previously
-large non-ABCI number was a summed-duration residual, not an exact wall-clock
-idle or harness bucket. With bounded interval union enabled, the accepted
-windows have only `1.52s` to `2.53s` of exact residual outside the ABCI busy
-union:
+The new instrumentation narrows the non-ABCI question but does not fully answer
+it. The previous large non-ABCI number was a summed-duration residual, not an
+exact wall-clock idle or harness bucket. The new bounded interval union
+collapses the residual to `1.52s` to `2.53s`, but because the source intervals
+are scrape-to-scrape upper bounds, that residual is only a lower bound on true
+non-ABCI wall time:
 
-| Workload | Backend | Window TPS | Exact non-ABCI s | Exact non-ABCI % | Prior-style approx non-ABCI % |
+| Workload | Backend | Window TPS | Bounded residual lower bound s | Lower-bound % | Prior-style approx non-ABCI % |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Plain send | goleveldb | 663.28 | 1.52 | 0.51% | 33.08% |
 | Plain send | TreeDB | 594.56 | 2.53 | 0.75% | 42.39% |
@@ -33,11 +36,15 @@ better bounded:
 
 The current best read is:
 
-- There is not a large exact non-ABCI wall-time bucket left unexplained by the
-  accepted-window interval model.
 - The interval source is `bounded_sample`, derived from Prometheus counter
   deltas, so it is an upper-bound scrape-window model rather than event-level
   ABCI tracing.
+- The bounded residual is not an exact non-ABCI measurement. It proves the
+  current interval coverage can saturate the load window, but it cannot prove
+  the true non-ABCI wall time is only `1-3s`.
+- The prior approximate residual is also not exact. Together, the two values
+  show that exact attribution still needs event-level spans rather than another
+  summed-counter subtraction.
 - TreeDB commit is materially slower per block, but commit explains only part
   of the slower block cadence.
 - Active-window CPU profiles do not show a single dominant TreeDB CPU hotspot.
@@ -117,16 +124,17 @@ Rejected-but-preserved rows:
 | Small multisend | goleveldb | 1 | Completed `119,998` successful tx in `180.52s`, below the 5-minute acceptance floor |
 | Small multisend | TreeDB | 1 | Completed `119,999` successful tx in `185.02s`, below the 5-minute acceptance floor |
 
-## Exact Non-ABCI Accounting
+## Bounded-Sample Non-ABCI Accounting
 
-The exact residual below is computed as
+The bounded residual below is computed as
 `max(0, load_window_seconds - abci_busy_union_seconds)`. The union is exact over
-the bounded intervals collected from
-`cometbft_abci_connection_method_timing_seconds` counter changes. It is not
-event-level tracing, and the runner preserves the older approximate residual
-for comparison.
+the intervals collected by the runner, but those intervals are upper-bound
+scrape windows created when
+`cometbft_abci_connection_method_timing_seconds` counters change. Therefore the
+residual is a lower bound on true non-ABCI wall time, not an exact measurement.
+The runner preserves the older approximate residual for comparison.
 
-| Workload | Backend | Window s | ABCI union s | Exact residual s | Approx residual s | Approx residual % | CheckTx s | Finalize s | Commit s | Validator CPU s | Core equiv |
+| Workload | Backend | Window s | ABCI bounded union s | Residual lower bound s | Approx residual s | Approx residual % | CheckTx s | Finalize s | Commit s | Validator CPU s | Core equiv |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Plain send | TreeDB | 335.03 | 332.50 | 2.53 | 142.02 | 42.39% | 103.43 | 43.15 | 44.74 | 488.68 | 1.46 |
 | Plain send | goleveldb | 300.02 | 298.50 | 1.52 | 99.24 | 33.08% | 115.71 | 51.22 | 32.10 | 758.69 | 2.53 |
@@ -135,8 +143,13 @@ for comparison.
 
 Interpretation:
 
-- The old approximate residual overstated the actionable "non-ABCI" question
-  because summed ABCI durations do not describe wall-clock interval coverage.
+- The old approximate residual and the bounded residual are both insufficient
+  as exact non-ABCI wall-time measurements. The old value is a summed-counter
+  residual; the new value is a lower bound after subtracting upper-bound
+  scrape-window coverage.
+- The current instrumentation still cannot say whether true non-ABCI time is
+  close to the bounded lower bound or materially closer to the prior-style
+  approximate residual.
 - TreeDB does not spend more summed CheckTx or FinalizeBlock time in these
   accepted rows. Its summed CheckTx and FinalizeBlock times are lower than
   goleveldb in both workloads.
@@ -242,18 +255,20 @@ This does not prove the mempool is the only bottleneck, but it does show that
 the active-window waiting profile is shared and transaction-intake-heavy rather
 than TreeDB-flat-CPU-heavy.
 
-## What This Resolves
+## What This Resolves And Does Not Resolve
 
-1. The broad "non-ABCI" bucket is no longer the top unknown in its prior form.
-   The exact residual over bounded intervals is tiny in all accepted rows.
-2. The earlier approximate residual remains useful as a warning that summed
-   counters are not a wall-clock decomposition, not as proof of a large
-   non-ABCI idle/harness window.
-3. TreeDB commit cost is quantified and real, but average commit penalty is
+1. This resolves a terminology bug: neither the old approximate residual nor
+   the new bounded-sample residual is exact non-ABCI wall time.
+2. The bounded-sample residual is still useful as a lower-bound diagnostic. It
+   shows the current scrape-window intervals can cover nearly the full accepted
+   window, which is why this source cannot settle the real non-ABCI question.
+3. Exact non-ABCI attribution remains open and requires event-level spans or a
+   more precise timeline source.
+4. TreeDB commit cost is quantified and real, but average commit penalty is
    only about one fifth of the block-cadence penalty.
-4. The gap is likely inside ABCI-covered transaction/block processing cadence
+5. The gap is likely inside ABCI-covered transaction/block processing cadence
    or in transaction-intake synchronization/backpressure, not in a large
-   unmeasured outer harness phase.
+   separately observed outer harness phase.
 
 ## Recommended Next Graph
 
