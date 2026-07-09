@@ -1319,14 +1319,14 @@ func makePreseedConfig(profile string, accounts, activeWallets int) preseedConfi
 const (
 	simappCosmosDBVersion = "v0.0.0-20260701184343-6ddcb75557e5"
 	simappCosmosDBRef     = "6ddcb75557e59bc4e6668ac7699cd52b63b3e402"
-	simappGomapVersion    = "v0.6.2-0.20260708213404-2182e84bd668"
-	simappGomapRef        = "2182e84bd668f6ea610726717d90e09a86a17a32"
+	simappGomapVersion    = "v0.6.2-0.20260709230517-9cd9c6874860"
+	simappGomapRef        = "9cd9c6874860d2988002701bef042e50ba142cd0"
 	simappIAVLVersion     = "v0.0.0-20260701072929-12a26715119b"
 	simappIAVLRef         = "12a26715119bb3ea55289ffd7b256161effc7b8b"
 	simappCometDBVersion  = "v0.0.0-20260701074104-b4f87847a725"
 	simappCometDBRef      = "b4f87847a725f92a046d927ce4a0f5b08b965995"
-	simappCometBFTVersion = "7453f4166fa988a768874861235c6013f75837d2"
-	simappCometBFTRef     = "7453f4166fa988a768874861235c6013f75837d2"
+	simappCometBFTVersion = "87379c903cc82c03874b24a6e3f9045784ba4681"
+	simappCometBFTRef     = "87379c903cc82c03874b24a6e3f9045784ba4681"
 )
 
 func simappDependencyPins(includeCometDB bool) []dependencyPin {
@@ -1449,9 +1449,9 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend, txIndexer s
 
 func simappImageTag(includeCometDB bool) string {
 	if includeCometDB {
-		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-2182e84-comet-7453f41"
+		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-9cd9c68-comet-87379c9"
 	}
-	return "ironbird-report:snissn-sdk-4948247-cosmosdb-6ddcb75-gomap-2182e84"
+	return "ironbird-report:snissn-sdk-4948247-cosmosdb-6ddcb75-gomap-9cd9c68"
 }
 
 func celestiaSyncScenario(cfg celestiaSyncConfig) scenario {
@@ -5420,15 +5420,18 @@ func summarizeLoadWindowAccounting(result runResult, obs loadWindowObservation) 
 			if row.ABCIIntervalProvenance == "" {
 				row.ABCIIntervalProvenance = "wall_clock_intervals"
 			}
-			abciOverlapSeconds := nonNegative(signal.ABCIObservedSeconds - abciBusyUnionSeconds)
-			row.ABCIOverlapSeconds = &abciOverlapSeconds
 			validatorNonABCIWallSeconds := nonNegative(obs.Seconds - abciBusyUnionSeconds)
 			row.ValidatorNonABCIWallSeconds = &validatorNonABCIWallSeconds
 			row.UnaccountedResidualSeconds = validatorNonABCIWallSeconds
 			row.UnaccountedResidualFormula = "max(0, load_window_seconds - abci_busy_union_seconds)"
-			row.UnaccountedResidualClassification = "interval_union_based"
-			if signal.ABCIObservedSeconds < abciBusyUnionSeconds {
-				row.Notes = append(row.Notes, "ABCI busy union exceeds summed method seconds; interval source may be bounded or broader than method timer sums")
+			if row.ABCIIntervalProvenance == "exact_event" {
+				abciOverlapSeconds := nonNegative(signal.ABCIObservedSeconds - abciBusyUnionSeconds)
+				row.ABCIOverlapSeconds = &abciOverlapSeconds
+				row.UnaccountedResidualClassification = "exact_interval_union"
+			} else {
+				row.ABCIOverlapMissingReason = "ABCI interval union is scrape-bounded rather than event-exact; overlap with summed method timers is not meaningful"
+				row.UnaccountedResidualClassification = "bounded_sample_lower_bound"
+				row.Notes = append(row.Notes, "ABCI activity expands to the full scrape interval; the busy union is an upper bound and interval-derived non-ABCI time is only a lower bound")
 			}
 		} else {
 			row.ABCIBusyUnionMissingReason = "ABCI method interval start/end samples are not exported by this harness"
@@ -6438,9 +6441,9 @@ func writeLoadWindowAccountingMarkdown(b *strings.Builder, rows []loadWindowAcco
 		return
 	}
 	b.WriteString("### Accepted-Window Non-ABCI Accounting\n\n")
-	b.WriteString("Exact non-ABCI wall time is reported when ABCI interval union data is present. When intervals are unavailable, this table reports the explicit residual formula used for the approximate value.\n\n")
-	b.WriteString("| Node | Window s | Loadgen s | ABCI sum s | ABCI union s | ABCI overlap s | Commit s | Finalize s | CheckTx s | Exact non-ABCI s | Approx non-ABCI s | Approx non-ABCI % | Process CPU s | Core equiv | Block cadence s | Interval source | Missing exact fields | Residual formula |\n")
-	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |\n")
+	b.WriteString("Event-exact intervals produce exact non-ABCI wall time. Scrape-bounded intervals only show that an ABCI counter changed somewhere inside each scrape interval: their ABCI union is an upper bound, so interval-derived non-ABCI time is a lower bound. The sum-based residual remains approximate because ABCI methods can overlap.\n\n")
+	b.WriteString("| Node | Window s | Loadgen s | ABCI sum s | ABCI union s | ABCI overlap s | Commit s | Finalize s | CheckTx s | Interval-derived non-ABCI s | Approx sum residual s | Approx residual % | Process CPU s | Core equiv | Block cadence s | Interval source | Residual class | Missing exact fields | Residual formula |\n")
+	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |\n")
 	for _, row := range rows {
 		missing := accountingMissingSummary(row)
 		b.WriteString("| ")
@@ -6475,6 +6478,8 @@ func writeLoadWindowAccountingMarkdown(b *strings.Builder, rows []loadWindowAcco
 		b.WriteString(metricFloat(row.ConsensusBlockCadenceSeconds))
 		b.WriteString(" | ")
 		b.WriteString(mdCell(row.ABCIIntervalProvenance))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(row.UnaccountedResidualClassification))
 		b.WriteString(" | ")
 		b.WriteString(mdCell(missing))
 		b.WriteString(" | ")

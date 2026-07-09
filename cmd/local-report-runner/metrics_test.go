@@ -960,7 +960,7 @@ func TestSummarizeLoadWindowAccountingUsesABCIIntervals(t *testing.T) {
 	if row.ABCIBusyUnionMissingReason != "" || row.ValidatorNonABCIWallMissingReason != "" {
 		t.Fatalf("unexpected missing reasons: busy=%q wall=%q", row.ABCIBusyUnionMissingReason, row.ValidatorNonABCIWallMissingReason)
 	}
-	if row.UnaccountedResidualFormula != "max(0, load_window_seconds - abci_busy_union_seconds)" || row.UnaccountedResidualClassification != "interval_union_based" {
+	if row.UnaccountedResidualFormula != "max(0, load_window_seconds - abci_busy_union_seconds)" || row.UnaccountedResidualClassification != "exact_interval_union" {
 		t.Fatalf("residual formula/classification = %q/%q", row.UnaccountedResidualFormula, row.UnaccountedResidualClassification)
 	}
 	payload, err := json.Marshal(row)
@@ -1219,8 +1219,11 @@ func TestBoundedSampleABCIIntervalsFeedAccounting(t *testing.T) {
 	if row.ValidatorNonABCIWallSeconds == nil || *row.ValidatorNonABCIWallSeconds != 0 {
 		t.Fatalf("bounded non-ABCI wall = %v, want 0", row.ValidatorNonABCIWallSeconds)
 	}
-	if row.UnaccountedResidualClassification != "interval_union_based" {
-		t.Fatalf("residual classification = %q, want interval_union_based", row.UnaccountedResidualClassification)
+	if row.UnaccountedResidualClassification != "bounded_sample_lower_bound" {
+		t.Fatalf("residual classification = %q, want bounded_sample_lower_bound", row.UnaccountedResidualClassification)
+	}
+	if row.ABCIOverlapSeconds != nil || row.ABCIOverlapMissingReason == "" {
+		t.Fatalf("bounded overlap = %v reason=%q, want unavailable with reason", row.ABCIOverlapSeconds, row.ABCIOverlapMissingReason)
 	}
 }
 
@@ -1619,22 +1622,23 @@ func TestRenderReportMarkdownIncludesAccountingTimelineAndDwell(t *testing.T) {
 				SuccessfulTransactions: 1000,
 				TargetTransactions:     1000,
 				Accounting: []loadWindowAccounting{{
-					Name:                            "validator-0",
-					LoadWindowSeconds:               10,
-					LoadGeneratorWallSeconds:        11,
-					ABCIObservedSumSeconds:          3,
-					ABCIBusyUnionSeconds:            floatPtr(2.5),
-					ABCIOverlapSeconds:              floatPtr(0.5),
-					ABCIByMethodSeconds:             map[string]float64{"commit": 1, "finalize_block": 1.25, "check_tx": 0.5},
-					ValidatorNonABCIWallSeconds:     floatPtr(7.5),
-					ValidatorNonABCIApproxSeconds:   7,
-					ValidatorNonABCIPctApprox:       70,
-					ValidatorProcessCPUSecondsDelta: 25,
-					ValidatorCoreEquivalent:         2.5,
-					ConsensusBlockCadenceSeconds:    2,
-					ABCIIntervalProvenance:          "exact_event",
-					LoadgenClientWaitMissingReason:  "Catalyst wait unavailable",
-					UnaccountedResidualFormula:      "max(0, load_window_seconds - abci_busy_union_seconds)",
+					Name:                              "validator-0",
+					LoadWindowSeconds:                 10,
+					LoadGeneratorWallSeconds:          11,
+					ABCIObservedSumSeconds:            3,
+					ABCIBusyUnionSeconds:              floatPtr(2.5),
+					ABCIOverlapSeconds:                floatPtr(0.5),
+					ABCIByMethodSeconds:               map[string]float64{"commit": 1, "finalize_block": 1.25, "check_tx": 0.5},
+					ValidatorNonABCIWallSeconds:       floatPtr(7.5),
+					ValidatorNonABCIApproxSeconds:     7,
+					ValidatorNonABCIPctApprox:         70,
+					ValidatorProcessCPUSecondsDelta:   25,
+					ValidatorCoreEquivalent:           2.5,
+					ConsensusBlockCadenceSeconds:      2,
+					ABCIIntervalProvenance:            "exact_event",
+					LoadgenClientWaitMissingReason:    "Catalyst wait unavailable",
+					UnaccountedResidualFormula:        "max(0, load_window_seconds - abci_busy_union_seconds)",
+					UnaccountedResidualClassification: "exact_interval_union",
 				}},
 				TreeDBStatsTimeline: []treeDBStatsTimelineSample{{
 					Label:          "load_start_proxy",
@@ -1670,6 +1674,8 @@ func TestRenderReportMarkdownIncludesAccountingTimelineAndDwell(t *testing.T) {
 	for _, want := range []string{
 		"### Accepted-Window Non-ABCI Accounting",
 		"| validator-0 | 10 | 11 | 3 | 2.5 | 0.5 | 1 | 1.25 | 0.5 | 7.5 | 7 | 70 | 25 | 2.5 | 2 | exact_event |",
+		"exact_interval_union",
+		"Scrape-bounded intervals only show that an ABCI counter changed somewhere inside each scrape interval",
 		"### Accepted-Window TreeDB Stats Timeline",
 		"| load_end | 2026-07-08T12:00:10Z | 10 | 1 |",
 		"## plain-send-treedb TreeDB Post-Load Dwell",
