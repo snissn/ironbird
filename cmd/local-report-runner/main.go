@@ -1475,6 +1475,19 @@ func launchGenesisAccounts(sc scenario) int {
 	return sc.NumWallets
 }
 
+func rawTxAuditDecision(sc scenario, requested bool) (bool, string) {
+	if sc.IsEVMChain {
+		return false, ""
+	}
+	if !requested {
+		return false, "disabled by -raw-tx-audit=false"
+	}
+	if sc.TxIndexer == "null" {
+		return false, "disabled because tx_index.indexer=null does not support CometBFT /tx queries"
+	}
+	return true, ""
+}
+
 func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appProfiles appProfileCaptureConfig, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration, loadWindowTargetFraction float64, stopCatalystAfterLoadWindow bool, treeDBStatsSampleInterval, treeDBPostLoadDwell time.Duration) (result runResult) {
 	result.Scenario = sc
 	result.StartedAt = time.Now()
@@ -1485,7 +1498,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 		if result.LoadWindow != nil {
 			result.LoadWindow.PhaseOverlaps = summarizeLoadWindowPhaseOverlaps(result.PhaseTimeline, *result.LoadWindow)
 		}
-		if result.LoadTestResult.Overall.TotalTransactions != 0 || result.RawTxSummary != nil || result.CorrectedLoadTest != nil {
+		if result.LoadTestResult.Overall.TotalTransactions != 0 || usableRawTxSummary(result) != nil || result.CorrectedLoadTest != nil {
 			result.Derived = deriveMetrics(sc, result)
 		}
 		result.RuntimeBreakdown = summarizeRuntimeBreakdown(result)
@@ -1721,17 +1734,22 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 		result.TreeDBDwellSnapshots = collectTreeDBDwellSnapshots(ctx, result.ProviderName, sc, result.TreeDBStatsAfter, result.DataSizesAfter, treeDBPostLoadDwell)
 		endPhase()
 	}
-	preAuditProfileRequests, postAuditProfileRequests := splitAppProfileRequestsForRawTxAudit(appProfileRequests(sc, appProfiles))
+	runRawTxAudit, rawTxAuditSkipReason := rawTxAuditDecision(sc, rawTxAudit)
+	profileRequests := appProfileRequests(sc, appProfiles)
+	preAuditProfileRequests, postAuditProfileRequests := profileRequests, []appProfileRequest(nil)
+	if runRawTxAudit {
+		preAuditProfileRequests, postAuditProfileRequests = splitAppProfileRequestsForRawTxAudit(profileRequests)
+	}
 	endPhase = startPhase(&result, "collect_app_profiles", "")
 	result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfileRequests(ctx, launchResp.ProviderState, launchResp.ChainState, sc, preAuditProfileRequests)...)
 	endPhase()
-	if !sc.IsEVMChain && rawTxAudit {
+	if runRawTxAudit {
 		endPhase = startPhase(&result, "raw_tx_audit", "")
 		result.RawTxAudit = auditRawTxs(ctx, result.ProviderName, sc.ChainName, loadResp.TaskLogs, loadResp.Result)
 		result.RawTxSummary = summarizeTxAudit(result.RawTxAudit, loadResp.Result.Overall.Runtime)
 		endPhase()
-	} else if !sc.IsEVMChain {
-		result.RawTxAuditSkipped = "disabled by -raw-tx-audit=false"
+	} else if rawTxAuditSkipReason != "" {
+		result.RawTxAuditSkipped = rawTxAuditSkipReason
 	}
 	if len(postAuditProfileRequests) != 0 {
 		endPhase = startPhase(&result, "collect_app_cpu_profile", "")
@@ -4662,8 +4680,8 @@ func summarizeRuntimeBreakdown(result runResult) []runtimeBreakdown {
 		return nil
 	}
 	workloadRuntime := loadRuntimeSeconds(result)
-	if workloadRuntime == 0 && result.RawTxSummary != nil && result.RawTxSummary.TPS > 0 {
-		workloadRuntime = float64(result.RawTxSummary.Successful) / result.RawTxSummary.TPS
+	if raw := usableRawTxSummary(result); workloadRuntime == 0 && raw != nil && raw.TPS > 0 {
+		workloadRuntime = float64(raw.Successful) / raw.TPS
 	}
 	out := make([]runtimeBreakdown, 0, len(result.StorageSignals))
 	for _, signal := range result.StorageSignals {
@@ -5588,7 +5606,8 @@ func parseRunnerOverall(line string) *runnerLogOverall {
 
 func summarizeCorrectedLoadTest(result runResult) *correctedLoadTest {
 	overall := result.LoadTestResult.Overall
-	if overall.TotalTransactions == 0 && result.RawTxSummary == nil && len(result.StorageSignals) == 0 {
+	rawSummary := usableRawTxSummary(result)
+	if overall.TotalTransactions == 0 && rawSummary == nil && len(result.StorageSignals) == 0 {
 		return nil
 	}
 	out := &correctedLoadTest{
@@ -5600,15 +5619,15 @@ func summarizeCorrectedLoadTest(result runResult) *correctedLoadTest {
 		RuntimeSeconds:         overall.Runtime.Seconds(),
 		TPS:                    overall.TPS,
 	}
-	if result.RawTxSummary != nil && result.RawTxSummary.Queried > 0 {
+	if rawSummary != nil && rawSummary.Queried > 0 {
 		out.Source = "raw_tx_audit"
-		out.TotalTransactions = result.RawTxSummary.Queried
-		out.IncludedTransactions = result.RawTxSummary.Found
-		out.SuccessfulTransactions = result.RawTxSummary.Successful
-		out.FailedTransactions = result.RawTxSummary.Failed
-		out.TotalGasUsed = result.RawTxSummary.TotalGasUsed
-		if result.RawTxSummary.TPS > 0 {
-			out.TPS = result.RawTxSummary.TPS
+		out.TotalTransactions = rawSummary.Queried
+		out.IncludedTransactions = rawSummary.Found
+		out.SuccessfulTransactions = rawSummary.Successful
+		out.FailedTransactions = rawSummary.Failed
+		out.TotalGasUsed = rawSummary.TotalGasUsed
+		if rawSummary.TPS > 0 {
+			out.TPS = rawSummary.TPS
 		}
 	} else if included, successful, candidates, ok := appMetricLoadCounts(result.StorageSignals); ok && shouldUseAppMetricLoadCounts(overall, included, successful) {
 		out.Source = "app_metrics"
@@ -5658,6 +5677,13 @@ func summarizeCorrectedLoadTest(result runResult) *correctedLoadTest {
 		out.Notes = append(out.Notes, "catalyst result differs from corrected counts")
 	}
 	return out
+}
+
+func usableRawTxSummary(result runResult) *txAuditSummary {
+	if result.Scenario.TxIndexer == "null" {
+		return nil
+	}
+	return result.RawTxSummary
 }
 
 func shouldUseAppMetricLoadCounts(overall ctlt.OverallStats, included, successful int) bool {
@@ -5808,13 +5834,13 @@ func loadCounts(result runResult) (included, successful int, runtimeSeconds, tps
 		tps = result.CorrectedLoadTest.TPS
 		return included, successful, runtimeSeconds, tps
 	}
-	if result.RawTxSummary != nil {
-		included = result.RawTxSummary.Found
-		successful = result.RawTxSummary.Successful
-		if result.RawTxSummary.TPS > 0 {
-			tps = result.RawTxSummary.TPS
+	if raw := usableRawTxSummary(result); raw != nil {
+		included = raw.Found
+		successful = raw.Successful
+		if raw.TPS > 0 {
+			tps = raw.TPS
 			if runtimeSeconds == 0 && successful > 0 {
-				runtimeSeconds = float64(successful) / result.RawTxSummary.TPS
+				runtimeSeconds = float64(successful) / raw.TPS
 			}
 		}
 	}

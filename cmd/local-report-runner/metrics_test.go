@@ -1845,6 +1845,48 @@ func TestSplitAppProfileRequestsForRawTxAuditKeepsCPUAfterAudit(t *testing.T) {
 	}
 }
 
+func TestRawTxAuditDecision(t *testing.T) {
+	tests := []struct {
+		name       string
+		scenario   scenario
+		requested  bool
+		wantRun    bool
+		wantReason string
+	}{
+		{
+			name:       "null indexer",
+			scenario:   scenario{TxIndexer: "null"},
+			requested:  true,
+			wantReason: "disabled because tx_index.indexer=null does not support CometBFT /tx queries",
+		},
+		{
+			name:      "kv indexer",
+			scenario:  scenario{TxIndexer: "kv"},
+			requested: true,
+			wantRun:   true,
+		},
+		{
+			name:       "disabled flag",
+			scenario:   scenario{TxIndexer: "kv"},
+			wantReason: "disabled by -raw-tx-audit=false",
+		},
+		{
+			name:      "evm chain",
+			scenario:  scenario{IsEVMChain: true, TxIndexer: "kv"},
+			requested: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRun, gotReason := rawTxAuditDecision(tt.scenario, tt.requested)
+			if gotRun != tt.wantRun || gotReason != tt.wantReason {
+				t.Fatalf("rawTxAuditDecision() = (%t, %q), want (%t, %q)", gotRun, gotReason, tt.wantRun, tt.wantReason)
+			}
+		})
+	}
+}
+
 func TestAnnotateProfileArtifactsWithLoadWindowTiming(t *testing.T) {
 	loadStarted := time.Date(2026, 7, 7, 1, 2, 3, 0, time.UTC)
 	loadEnded := loadStarted.Add(5 * time.Second)
@@ -2105,6 +2147,42 @@ func TestCorrectedLoadTestUsesAppMetricsWhenAuditSkipped(t *testing.T) {
 	}
 	if len(got.AppMetricsIncludedCandidates) == 0 {
 		t.Fatalf("expected app metric candidates")
+	}
+}
+
+func TestCorrectedLoadTestIgnoresRawAuditForNullIndexer(t *testing.T) {
+	result := runResult{
+		Scenario: scenario{TxIndexer: "null"},
+		LoadTestResult: ctlt.LoadTestResult{
+			Overall: ctlt.OverallStats{
+				TotalTransactions:  150,
+				FailedTransactions: 150,
+				Runtime:            30 * time.Second,
+			},
+		},
+		RawTxSummary: &txAuditSummary{
+			Queried: 150,
+		},
+		StorageSignals: []storageSignal{{
+			Name:                   "validator-0",
+			ConsensusTotalTxsDelta: 150,
+			SDKTxCountDelta:        150,
+			SDKTxSuccessfulDelta:   150,
+		}},
+	}
+
+	got := summarizeCorrectedLoadTest(result)
+	if got == nil {
+		t.Fatalf("corrected summary was nil")
+	}
+	if got.Source != "app_metrics" {
+		t.Fatalf("source = %q, want app_metrics", got.Source)
+	}
+	if got.IncludedTransactions != 150 || got.SuccessfulTransactions != 150 || got.FailedTransactions != 0 {
+		t.Fatalf("corrected counts = included %d success %d failed %d, want 150/150/0", got.IncludedTransactions, got.SuccessfulTransactions, got.FailedTransactions)
+	}
+	if got.TPS != 5 {
+		t.Fatalf("tps = %v, want 5", got.TPS)
 	}
 }
 
