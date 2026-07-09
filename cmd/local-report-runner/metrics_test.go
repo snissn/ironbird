@@ -627,23 +627,7 @@ func TestMetricSamplePointsPreserveLastGoodAcrossScrapeFailure(t *testing.T) {
 	}
 }
 
-func TestMergeUsableMetricBaselineSnapshotsPreservesPriorOnPartialScrape(t *testing.T) {
-	baseline := []metricSnapshot{
-		{
-			Name: "validator-0",
-			URL:  "http://old-0/metrics",
-			Metrics: map[string]float64{
-				`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 10,
-			},
-		},
-		{
-			Name: "validator-1",
-			URL:  "http://old-1/metrics",
-			Metrics: map[string]float64{
-				`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 20,
-			},
-		},
-	}
+func TestUsableMetricSnapshotsDropsFailedFreshBaselineSamples(t *testing.T) {
 	fresh := []metricSnapshot{
 		{
 			Name: "validator-0",
@@ -659,22 +643,61 @@ func TestMergeUsableMetricBaselineSnapshotsPreservesPriorOnPartialScrape(t *test
 		},
 	}
 
-	merged := mergeUsableMetricBaselineSnapshots(baseline, fresh)
-	if len(merged) != 2 {
-		t.Fatalf("merged len=%d want 2: %+v", len(merged), merged)
+	baseline := usableMetricSnapshots(fresh)
+	if len(baseline) != 1 {
+		t.Fatalf("baseline len=%d want 1: %+v", len(baseline), baseline)
 	}
-	byName := metricSnapshotsByName(merged)
+	byName := metricSnapshotsByName(baseline)
 	if got := byName["validator-0"].Metrics[`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`]; got != 12 {
 		t.Fatalf("validator-0 baseline = %v, want fresh value 12", got)
 	}
 	if byName["validator-0"].URL != "http://new-0/metrics" {
 		t.Fatalf("validator-0 URL = %q, want fresh URL", byName["validator-0"].URL)
 	}
-	if got := byName["validator-1"].Metrics[`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`]; got != 20 {
-		t.Fatalf("validator-1 baseline = %v, want preserved prior value 20", got)
+	if byName["validator-1"] != nil {
+		t.Fatalf("failed validator-1 should not be used as a fresh load-window baseline: %+v", byName["validator-1"])
 	}
-	if byName["validator-1"].Error != "" {
-		t.Fatalf("validator-1 preserved baseline has error %q", byName["validator-1"].Error)
+}
+
+func TestAppendMissingUsableMetricBaselineSnapshotsAddsOnlyUnknownNodes(t *testing.T) {
+	baseline := []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 10,
+		},
+	}}
+	current := []metricSnapshot{
+		{
+			Name: "validator-0",
+			Metrics: map[string]float64{
+				`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 99,
+			},
+		},
+		{
+			Name: "validator-1",
+			Metrics: map[string]float64{
+				`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 20,
+			},
+		},
+		{
+			Name:  "validator-2",
+			Error: "connection refused",
+		},
+	}
+
+	merged := appendMissingUsableMetricBaselineSnapshots(baseline, current)
+	if len(merged) != 2 {
+		t.Fatalf("merged len=%d want 2: %+v", len(merged), merged)
+	}
+	byName := metricSnapshotsByName(merged)
+	if got := byName["validator-0"].Metrics[`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`]; got != 10 {
+		t.Fatalf("validator-0 baseline = %v, want preserved original value 10", got)
+	}
+	if got := byName["validator-1"].Metrics[`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`]; got != 20 {
+		t.Fatalf("validator-1 baseline = %v, want first usable value 20", got)
+	}
+	if byName["validator-2"] != nil {
+		t.Fatalf("failed validator-2 should not be added as a missing baseline: %+v", byName["validator-2"])
 	}
 }
 

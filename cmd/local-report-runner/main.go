@@ -2399,28 +2399,39 @@ func metricSnapshotUsable(snapshot metricSnapshot) bool {
 	return snapshot.Name != "" && snapshot.Error == "" && len(snapshot.Metrics) > 0
 }
 
-func mergeUsableMetricBaselineSnapshots(baseline, fresh []metricSnapshot) []metricSnapshot {
-	out := cloneMetricSnapshots(baseline)
-	if len(fresh) == 0 {
-		return out
+func usableMetricSnapshots(snapshots []metricSnapshot) []metricSnapshot {
+	if len(snapshots) == 0 {
+		return nil
 	}
+	out := make([]metricSnapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if metricSnapshotUsable(snapshot) {
+			out = append(out, cloneMetricSnapshot(snapshot))
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func appendMissingUsableMetricBaselineSnapshots(baseline, current []metricSnapshot) []metricSnapshot {
+	out := cloneMetricSnapshots(baseline)
 	indexByName := map[string]int{}
 	for i, snapshot := range out {
 		if snapshot.Name != "" {
 			indexByName[snapshot.Name] = i
 		}
 	}
-	for _, snapshot := range fresh {
+	for _, snapshot := range current {
 		if !metricSnapshotUsable(snapshot) {
 			continue
 		}
-		cloned := cloneMetricSnapshot(snapshot)
-		if idx, ok := indexByName[snapshot.Name]; ok {
-			out[idx] = cloned
+		if _, ok := indexByName[snapshot.Name]; ok {
 			continue
 		}
 		indexByName[snapshot.Name] = len(out)
-		out = append(out, cloned)
+		out = append(out, cloneMetricSnapshot(snapshot))
 	}
 	return out
 }
@@ -2603,7 +2614,7 @@ func (collector *treeDBStatsTimelineCollector) stop() {
 }
 
 func startLoadWindowMonitor(ctx context.Context, providerName string, baseline []metricSnapshot, treeDBBaseline []treeDBStatsSnapshot, collectTreeDBStats bool, targetTransactions int, minDuration, interval, treeDBStatsSampleInterval time.Duration) *loadWindowMonitor {
-	baseline = mergeUsableMetricBaselineSnapshots(baseline, scrapeMetrics(ctx, providerName))
+	baseline = usableMetricSnapshots(scrapeMetrics(ctx, providerName))
 	started := time.Now()
 	if targetTransactions <= 0 {
 		done := make(chan loadWindowObservation, 1)
@@ -2658,6 +2669,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 		}
 		observe := func() loadWindowObservation {
 			metrics := scrapeMetrics(monitorCtx, providerName)
+			baseline = appendMissingUsableMetricBaselineSnapshots(baseline, metrics)
 			signals := summarizeStorageSignals(baseline, metrics, nil, nil)
 			included, successful, candidates, ok := appMetricLoadCounts(signals)
 			ended := time.Now()
