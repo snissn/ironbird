@@ -1325,8 +1325,8 @@ const (
 	simappIAVLRef         = "12a26715119bb3ea55289ffd7b256161effc7b8b"
 	simappCometDBVersion  = "v0.0.0-20260701074104-b4f87847a725"
 	simappCometDBRef      = "b4f87847a725f92a046d927ce4a0f5b08b965995"
-	simappCometBFTVersion = "21fad48dc9eb5b037f061fb8520a0283b5497e6d"
-	simappCometBFTRef     = "21fad48dc9eb5b037f061fb8520a0283b5497e6d"
+	simappCometBFTVersion = "f8f72b337daf21a856bb15ac0a454b008796f872"
+	simappCometBFTRef     = "f8f72b337daf21a856bb15ac0a454b008796f872"
 )
 
 func simappDependencyPins(includeCometDB bool) []dependencyPin {
@@ -1449,7 +1449,7 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend, txIndexer s
 
 func simappImageTag(includeCometDB bool) string {
 	if includeCometDB {
-		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-2182e84-comet-21fad48"
+		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-2182e84-comet-f8f72b3"
 	}
 	return "ironbird-report:snissn-sdk-4948247-cosmosdb-6ddcb75-gomap-2182e84"
 }
@@ -4066,8 +4066,10 @@ type exactCommitMetricSpec struct {
 var exactCommitMetricSpecs = []exactCommitMetricSpec{
 	{Name: "consensus commit", Class: "consensus_commit", Metric: "cometbft_consensus_commit_finalize_seconds", Note: "full finalizeCommit path before the NewHeight transition completes"},
 	{Name: "commit blockstore", Parent: "consensus commit", Class: "node_db_blockstore", Metric: "cometbft_consensus_commit_block_store_seconds", Note: "synchronous blockstore SaveBlock inside consensus commit"},
+	{Name: "commit blockstore lock", Parent: "consensus commit", Class: "consensus_lock", Metric: "cometbft_consensus_commit_block_store_lock_seconds", Note: "Celestia Core consensus lock reacquisition after SaveBlock"},
 	{Name: "commit consensus WAL", Parent: "consensus commit", Class: "consensus_wal", Metric: "cometbft_consensus_commit_consensus_wal_seconds", Note: "synchronous end-height consensus WAL record"},
 	{Name: "commit apply block", Parent: "consensus commit", Class: "block_execution", Metric: "cometbft_consensus_commit_apply_block_seconds", Note: "state executor ApplyVerifiedBlock call"},
+	{Name: "commit apply block lock", Parent: "consensus commit", Class: "consensus_lock", Metric: "cometbft_consensus_commit_apply_block_lock_seconds", Note: "Celestia Core consensus lock reacquisition after ApplyVerifiedBlock"},
 	{Name: "commit record metrics", Parent: "consensus commit", Class: "consensus_bookkeeping", Metric: "cometbft_consensus_commit_record_metrics_seconds", Note: "post-commit consensus metric recording"},
 	{Name: "commit update consensus state", Parent: "consensus commit", Class: "consensus_bookkeeping", Metric: "cometbft_consensus_commit_update_state_seconds", Note: "transition to the next consensus NewHeight state"},
 	{Name: "state apply block", Parent: "commit apply block", Class: "block_execution", Metric: "cometbft_state_apply_block_seconds", Note: "complete state executor ApplyVerifiedBlock path"},
@@ -5078,8 +5080,10 @@ func hasExactCommitSpanCoverage(signal storageSignal) bool {
 	for _, name := range []string{
 		"consensus commit",
 		"commit blockstore",
+		"commit blockstore lock",
 		"commit consensus WAL",
 		"commit apply block",
+		"commit apply block lock",
 		"commit record metrics",
 		"commit update consensus state",
 	} {
