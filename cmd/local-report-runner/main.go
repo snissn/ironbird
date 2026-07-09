@@ -5004,7 +5004,7 @@ func summarizeCadenceDiagnostics(obs loadWindowObservation, logs loadTestLogSumm
 			},
 		}
 		row.BlockCount = cadenceBlockCount(signal, pipeline)
-		row.AvgBlockIntervalSeconds = cadenceAvgBlockInterval(signal, pipeline)
+		row.AvgBlockIntervalSeconds = cadenceAvgBlockInterval(obs.Seconds, row.BlockCount, pipeline)
 		row.AvgTxsPerBlock = cadenceAvgTxsPerBlock(obs, signal, pipeline, row.BlockCount)
 		row.Stages = cadenceStages(signal, row.BlockCount)
 		row.Stages = append(row.Stages, metricAttributionCadenceStages(signal, row.BlockCount)...)
@@ -5147,10 +5147,10 @@ func cadenceBlockCount(signal storageSignal, pipeline pipelineSignal) int {
 	}
 }
 
-func cadenceAvgBlockInterval(signal storageSignal, pipeline pipelineSignal) float64 {
+func cadenceAvgBlockInterval(windowSeconds float64, blockCount int, pipeline pipelineSignal) float64 {
 	switch {
-	case signal.ConsensusBlockIntervalCount > 0 && signal.ConsensusBlockIntervalSeconds > 0:
-		return signal.ConsensusBlockIntervalSeconds / float64(signal.ConsensusBlockIntervalCount)
+	case windowSeconds > 0 && blockCount > 0:
+		return windowSeconds / float64(blockCount)
 	case pipeline.AvgBlockIntervalSeconds > 0:
 		return pipeline.AvgBlockIntervalSeconds
 	default:
@@ -5449,8 +5449,10 @@ func summarizeLoadWindowAccounting(result runResult, obs loadWindowObservation) 
 			row.ValidatorCoreEquivalent = signal.ProcessCPUSecondsDelta / obs.Seconds
 			row.ValidatorNonABCIPctApprox = 100 * row.ValidatorNonABCIApproxSeconds / obs.Seconds
 		}
-		if signal.ConsensusBlockIntervalCount > 0 {
-			row.ConsensusBlockCadenceSeconds = signal.ConsensusBlockIntervalSeconds / float64(signal.ConsensusBlockIntervalCount)
+		blockCount := cadenceBlockCount(signal, pipelineByName[signal.Name])
+		if obs.Seconds > 0 && blockCount > 0 {
+			row.ConsensusBlockCadenceSeconds = obs.Seconds / float64(blockCount)
+			row.Notes = append(row.Notes, "block cadence is accepted-window wall time divided by finalized block count; cometbft_consensus_block_interval_seconds measures block-header timestamp deltas instead")
 		}
 		if pipeline, ok := pipelineByName[signal.Name]; ok {
 			row.MempoolBacklogSummary = fmt.Sprintf("submitted=%d included=%d successful=%d send_gap=%d failed_send=%d", pipeline.SubmittedTransactions, pipeline.IncludedTransactions, pipeline.SuccessfulTransactions, pipeline.SubmittedMinusIncluded, pipeline.FailedSendTotal)
@@ -5523,8 +5525,13 @@ func summarizePipelineSignals(obs loadWindowObservation, logs loadTestLogSummary
 			row.AvgCommitSeconds = row.ABCICommitSeconds / float64(row.ABCICommitCount)
 			row.AvgTxsPerCommit = float64(obs.IncludedTransactions) / float64(row.ABCICommitCount)
 		}
-		if row.ConsensusBlockIntervalCount > 0 {
+		blockCount := cadenceBlockCount(signal, row)
+		if obs.Seconds > 0 && blockCount > 0 {
+			row.AvgBlockIntervalSeconds = obs.Seconds / float64(blockCount)
+			row.Notes = append(row.Notes, "average block interval is accepted-window wall time per finalized block; raw consensus interval metrics are block-header timestamp deltas")
+		} else if row.ConsensusBlockIntervalCount > 0 {
 			row.AvgBlockIntervalSeconds = row.ConsensusBlockIntervalSeconds / float64(row.ConsensusBlockIntervalCount)
+			row.Notes = append(row.Notes, "accepted-window wall cadence unavailable; average block interval falls back to block-header timestamp deltas")
 		}
 		switch {
 		case row.ABCIFinalizeBlockCount > 0:
@@ -6453,7 +6460,7 @@ func writeLoadWindowAccountingMarkdown(b *strings.Builder, rows []loadWindowAcco
 	}
 	b.WriteString("### Accepted-Window Non-ABCI Accounting\n\n")
 	b.WriteString("Event-exact intervals produce exact non-ABCI wall time. Scrape-bounded intervals only show that an ABCI counter changed somewhere inside each scrape interval: their ABCI union is an upper bound, so interval-derived non-ABCI time is a lower bound. The sum-based residual remains approximate because ABCI methods can overlap.\n\n")
-	b.WriteString("| Node | Window s | Loadgen s | ABCI sum s | ABCI union s | ABCI overlap s | Commit s | Finalize s | CheckTx s | Interval-derived non-ABCI s | Approx sum residual s | Approx residual % | Process CPU s | Core equiv | Block cadence s | Interval source | Residual class | Missing exact fields | Residual formula |\n")
+	b.WriteString("| Node | Window s | Loadgen s | ABCI sum s | ABCI union s | ABCI overlap s | Commit s | Finalize s | CheckTx s | Interval-derived non-ABCI s | Approx sum residual s | Approx residual % | Process CPU s | Core equiv | Observed block cadence s | Interval source | Residual class | Missing exact fields | Residual formula |\n")
 	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |\n")
 	for _, row := range rows {
 		missing := accountingMissingSummary(row)
@@ -6529,8 +6536,8 @@ func writeCadenceDiagnosticsMarkdown(b *strings.Builder, rows []cadenceDiagnosti
 		return
 	}
 	b.WriteString("### Accepted-Window Cadence Diagnostics\n\n")
-	b.WriteString("The block-stage residual is the average block interval minus measured ABCI block-stage averages: commit, finalize_block, prepare_proposal, and process_proposal. CheckTx is reported separately as transaction-intake pressure and is not subtracted from the block-stage residual. Exact CometBFT commit rows are nested spans; compare siblings under one parent rather than summing parents and children. The async tx-index rows can overlap consensus work.\n\n")
-	b.WriteString("| Node | Blocks | Block interval s | Avg tx/block | ABCI block-stage s/block | CheckTx equiv s/block | Consensus step s/block | Residual s/block | Residual % | Exact commit coverage | Missing spans |\n")
+	b.WriteString("The block-stage residual is accepted-window wall time per finalized block minus measured ABCI block-stage averages: commit, finalize_block, prepare_proposal, and process_proposal. CometBFT's block-interval histogram measures block-header timestamp deltas and is not used as wall cadence. CheckTx is reported separately as transaction-intake pressure and is not subtracted from the block-stage residual. Exact CometBFT commit rows are nested spans; compare siblings under one parent rather than summing parents and children. The async tx-index rows can overlap consensus work.\n\n")
+	b.WriteString("| Node | Finalized blocks | Observed wall cadence s | Avg tx/block | ABCI block-stage s/block | CheckTx equiv s/block | Consensus step s/block | Residual s/block | Residual % | Exact commit coverage | Missing spans |\n")
 	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n")
 	for _, row := range rows {
 		b.WriteString("| ")
@@ -6643,13 +6650,20 @@ func writePipelineSignalsMarkdown(b *strings.Builder, rows []pipelineSignal) {
 		return
 	}
 	b.WriteString("### Accepted-Window Transaction Pipeline Summary\n\n")
-	b.WriteString("This summary promotes node metrics and Catalyst aggregate logs. It does not include per-transaction broadcast or inclusion latency unless Catalyst exports those timings.\n\n")
-	b.WriteString("| Node | Submitted | Included | Successful | Send gap | Blocks | Txs/block | Block interval s | CheckTx avg s | Finalize avg s | Commit avg s |\n")
+	b.WriteString("This summary promotes node metrics and Catalyst aggregate logs. Observed cadence is accepted-window wall time per finalized block; the raw CometBFT block-interval histogram instead measures block-header timestamp deltas. This summary does not include per-transaction broadcast or inclusion latency unless Catalyst exports those timings.\n\n")
+	b.WriteString("| Node | Submitted | Included | Successful | Send gap | Blocks | Txs/block | Observed cadence s | CheckTx avg s | Finalize avg s | Commit avg s |\n")
 	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 	for _, row := range rows {
-		blocks := row.CollectorBlockSpan
-		if blocks == 0 && row.ABCICommitCount > 0 {
+		var blocks uint64
+		switch {
+		case row.ABCIFinalizeBlockCount > 0:
+			blocks = uint64(row.ABCIFinalizeBlockCount)
+		case row.ABCICommitCount > 0:
 			blocks = uint64(row.ABCICommitCount)
+		case row.ConsensusBlockIntervalCount > 0:
+			blocks = uint64(row.ConsensusBlockIntervalCount)
+		default:
+			blocks = row.CollectorBlockSpan
 		}
 		txsPerBlock := row.AvgTxsPerConsensusBlock
 		if txsPerBlock == 0 && blocks > 0 {

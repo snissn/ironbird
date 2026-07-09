@@ -98,7 +98,7 @@ run above.
 | Successful transactions | 199,323 | 199,630 | 223,995 |
 | Load-window seconds | 300.540 | 337.525 | 315.024 |
 | Load-window TPS | 663.22 | 591.45 | 711.04 |
-| Mean block interval | 466.76 ms | 547.32 ms | 387.57 ms |
+| Observed wall cadence | 317.03 ms/block | 390.20 ms/block | 269.25 ms/block |
 | Consensus commit | 189.97 ms/block | 284.87 ms/block | 196.22 ms/block |
 | Commit blockstore `SaveBlock` | 13.71 ms/block | 29.41 ms/block | 20.79 ms/block |
 | State `ApplyVerifiedBlock` | 162.89 ms/block | 245.83 ms/block | 168.46 ms/block |
@@ -120,10 +120,12 @@ cadence and mempool scheduling vary between runs.
 The final candidate recorded 1,170 ABCI `FinalizeBlock`/`Commit` calls and 1,169
 consensus block-interval observations in the accepted metric window. Its
 223,993 consensus transaction delta is 191.45 transactions per finalized block;
-the accepted app metric reports 223,995 successful transactions. The 387.57 ms
-mean block interval uses the 1,169 interval observations. The validator used
-512.39 process-CPU seconds during the 315.024-second window, or 1.63 core
-equivalents.
+the accepted app metric reports 223,995 successful transactions. Accepted-window
+wall time divided by finalized blocks gives 269.25 ms/block. The 1,169 raw
+CometBFT block-interval observations average 387.57 ms because that histogram
+measures differences between block header timestamps, not host wall-clock
+cadence. The validator used 512.39 process-CPU seconds during the 315.024-second
+window, or 1.63 core equivalents.
 
 The current ABCI activity intervals are scrape-bounded, not event-exact. A
 method counter change marks the entire scrape interval as active. Therefore the
@@ -140,7 +142,8 @@ be presented as exact non-ABCI wall time.
 | Scrape-bounded ABCI interval union | 311.998 s | upper bound on ABCI-busy wall time |
 | Interval-derived non-ABCI | 3.025 s | lower bound, not an exact measurement |
 | Sum-derived non-ABCI residual | 77.915 s | approximate residual, not an exclusive bucket |
-| Mean block interval | 387.57 ms | measured cadence |
+| Observed wall cadence | 269.25 ms/block | 315.024 s / 1,170 finalized blocks |
+| Block-header timestamp interval | 387.57 ms | raw CometBFT histogram; not wall-clock cadence |
 
 The exact CometBFT stage spans do resolve the block-commit path. Rows below are
 nested where indicated and must not be summed across parent/child boundaries.
