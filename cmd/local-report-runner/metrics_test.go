@@ -355,6 +355,160 @@ func TestSummarizeLoadWindowAccountingMarksApproximateResidual(t *testing.T) {
 	}
 }
 
+func TestLoadWindowIntervalUnionClipsAndMerges(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	windowStart := base.Add(10 * time.Second)
+	windowEnd := base.Add(30 * time.Second)
+	intervals := []loadWindowInterval{
+		{
+			Name:       "validator-0",
+			Class:      "abci",
+			Method:     "check_tx",
+			Provenance: "exact_event",
+			Started:    base.Add(8 * time.Second),
+			Ended:      base.Add(16 * time.Second),
+		},
+		{
+			Name:       "validator-0",
+			Class:      "abci",
+			Method:     "finalize_block",
+			Provenance: "exact_event",
+			Started:    base.Add(14 * time.Second),
+			Ended:      base.Add(22 * time.Second),
+		},
+		{
+			Name:       "validator-0",
+			Class:      "abci",
+			Method:     "commit",
+			Provenance: "exact_event",
+			Started:    base.Add(28 * time.Second),
+			Ended:      base.Add(35 * time.Second),
+		},
+		{
+			Name:       "validator-1",
+			Class:      "abci",
+			Method:     "commit",
+			Provenance: "exact_event",
+			Started:    base.Add(10 * time.Second),
+			Ended:      base.Add(30 * time.Second),
+		},
+		{
+			Name:       "validator-0",
+			Class:      "loadgen",
+			Provenance: "exact_event",
+			Started:    base.Add(10 * time.Second),
+			Ended:      base.Add(30 * time.Second),
+		},
+	}
+
+	unionSeconds, count, provenance := loadWindowIntervalClassUnion(intervals, "validator-0", "abci", windowStart, windowEnd)
+	if unionSeconds != 14 {
+		t.Fatalf("union seconds = %v, want 14", unionSeconds)
+	}
+	if count != 3 {
+		t.Fatalf("interval count = %d, want 3", count)
+	}
+	if provenance != "exact_event" {
+		t.Fatalf("provenance = %q, want exact_event", provenance)
+	}
+
+	attribution := summarizeLoadWindowIntervalAttributions(intervals, "validator-0", windowStart, windowEnd)
+	if len(attribution) != 4 {
+		t.Fatalf("attribution rows = %d, want 4: %+v", len(attribution), attribution)
+	}
+}
+
+func TestSummarizeLoadWindowAccountingUsesABCIIntervals(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	result := runResult{
+		PhaseTimeline: []phaseSpan{{
+			Name:    "run_load_test",
+			Started: base,
+			Ended:   base.Add(10 * time.Second),
+			Seconds: 10,
+		}},
+	}
+	obs := loadWindowObservation{
+		StartedAt: base,
+		EndedAt:   base.Add(10 * time.Second),
+		Seconds:   10,
+		StorageSignals: []storageSignal{{
+			Name:                     "validator-0",
+			ABCIObservedSeconds:      8,
+			ABCICommitSeconds:        2,
+			ABCIFinalizeBlockSeconds: 4,
+			ABCICheckTxSeconds:       2,
+			ProcessCPUSecondsDelta:   15,
+		}},
+		WallClockIntervals: []loadWindowInterval{
+			{
+				Name:       "validator-0",
+				Class:      "abci",
+				Method:     "check_tx",
+				Provenance: "exact_event",
+				Started:    base,
+				Ended:      base.Add(2 * time.Second),
+			},
+			{
+				Name:       "validator-0",
+				Class:      "abci",
+				Method:     "finalize_block",
+				Provenance: "exact_event",
+				Started:    base.Add(1 * time.Second),
+				Ended:      base.Add(4 * time.Second),
+			},
+			{
+				Name:       "validator-0",
+				Class:      "abci",
+				Method:     "commit",
+				Provenance: "exact_event",
+				Started:    base.Add(6 * time.Second),
+				Ended:      base.Add(8 * time.Second),
+			},
+		},
+	}
+
+	rows := summarizeLoadWindowAccounting(result, obs)
+	if len(rows) != 1 {
+		t.Fatalf("accounting rows len=%d want 1", len(rows))
+	}
+	row := rows[0]
+	if row.ABCIBusyUnionSeconds == nil || *row.ABCIBusyUnionSeconds != 6 {
+		t.Fatalf("ABCI busy union = %v, want 6", row.ABCIBusyUnionSeconds)
+	}
+	if row.ABCIOverlapSeconds == nil || *row.ABCIOverlapSeconds != 2 {
+		t.Fatalf("ABCI overlap = %v, want 2", row.ABCIOverlapSeconds)
+	}
+	if row.ValidatorNonABCIWallSeconds == nil || *row.ValidatorNonABCIWallSeconds != 4 {
+		t.Fatalf("exact non-ABCI wall = %v, want 4", row.ValidatorNonABCIWallSeconds)
+	}
+	if row.ValidatorNonABCIApproxSeconds != 2 {
+		t.Fatalf("approx non-ABCI = %v, want 2", row.ValidatorNonABCIApproxSeconds)
+	}
+	if row.ABCIBusyUnionMissingReason != "" || row.ValidatorNonABCIWallMissingReason != "" {
+		t.Fatalf("unexpected missing reasons: busy=%q wall=%q", row.ABCIBusyUnionMissingReason, row.ValidatorNonABCIWallMissingReason)
+	}
+	if row.UnaccountedResidualFormula != "max(0, load_window_seconds - abci_busy_union_seconds)" || row.UnaccountedResidualClassification != "interval_union_based" {
+		t.Fatalf("residual formula/classification = %q/%q", row.UnaccountedResidualFormula, row.UnaccountedResidualClassification)
+	}
+	payload, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("marshal accounting: %v", err)
+	}
+	for _, want := range []string{
+		`"abci_busy_union_seconds":6`,
+		`"abci_overlap_seconds":2`,
+		`"validator_non_abci_wall_seconds":4`,
+		`"abci_interval_count":3`,
+		`"abci_interval_provenance":"exact_event"`,
+		`"interval_attribution"`,
+	} {
+		if !strings.Contains(string(payload), want) {
+			t.Fatalf("payload missing %s: %s", want, payload)
+		}
+	}
+}
+
 func TestMetricDeltaSnapshotsPreserveBeforeAfterDelta(t *testing.T) {
 	before := []metricSnapshot{{
 		Name: "validator-0",
@@ -722,21 +876,22 @@ func TestRenderReportMarkdownIncludesAccountingTimelineAndDwell(t *testing.T) {
 				SuccessfulTransactions: 1000,
 				TargetTransactions:     1000,
 				Accounting: []loadWindowAccounting{{
-					Name:                              "validator-0",
-					LoadWindowSeconds:                 10,
-					LoadGeneratorWallSeconds:          11,
-					ABCIObservedSumSeconds:            3,
-					ABCIByMethodSeconds:               map[string]float64{"commit": 1, "finalize_block": 1.25, "check_tx": 0.5},
-					ValidatorNonABCIApproxSeconds:     7,
-					ValidatorNonABCIPctApprox:         70,
-					ValidatorProcessCPUSecondsDelta:   25,
-					ValidatorCoreEquivalent:           2.5,
-					ConsensusBlockCadenceSeconds:      2,
-					ABCIBusyUnionMissingReason:        "ABCI intervals unavailable",
-					ABCIOverlapMissingReason:          "ABCI intervals unavailable",
-					ValidatorNonABCIWallMissingReason: "ABCI intervals unavailable",
-					LoadgenClientWaitMissingReason:    "Catalyst wait unavailable",
-					UnaccountedResidualFormula:        "max(0, load_window_seconds - abci_observed_sum_seconds)",
+					Name:                            "validator-0",
+					LoadWindowSeconds:               10,
+					LoadGeneratorWallSeconds:        11,
+					ABCIObservedSumSeconds:          3,
+					ABCIBusyUnionSeconds:            floatPtr(2.5),
+					ABCIOverlapSeconds:              floatPtr(0.5),
+					ABCIByMethodSeconds:             map[string]float64{"commit": 1, "finalize_block": 1.25, "check_tx": 0.5},
+					ValidatorNonABCIWallSeconds:     floatPtr(7.5),
+					ValidatorNonABCIApproxSeconds:   7,
+					ValidatorNonABCIPctApprox:       70,
+					ValidatorProcessCPUSecondsDelta: 25,
+					ValidatorCoreEquivalent:         2.5,
+					ConsensusBlockCadenceSeconds:    2,
+					ABCIIntervalProvenance:          "exact_event",
+					LoadgenClientWaitMissingReason:  "Catalyst wait unavailable",
+					UnaccountedResidualFormula:      "max(0, load_window_seconds - abci_busy_union_seconds)",
 				}},
 				TreeDBStatsTimeline: []treeDBStatsTimelineSample{{
 					Label:          "load_start_proxy",
@@ -771,7 +926,7 @@ func TestRenderReportMarkdownIncludesAccountingTimelineAndDwell(t *testing.T) {
 	md := renderReportMarkdown(artifact)
 	for _, want := range []string{
 		"### Accepted-Window Non-ABCI Accounting",
-		"| validator-0 | 10 | 11 | 3 | 1 | 1.25 | 0.5 | 7 | 70 | 25 | 2.5 | 2 |",
+		"| validator-0 | 10 | 11 | 3 | 2.5 | 0.5 | 1 | 1.25 | 0.5 | 7.5 | 7 | 70 | 25 | 2.5 | 2 | exact_event |",
 		"### Accepted-Window TreeDB Stats Timeline",
 		"| load_end | 2026-07-08T12:00:10Z | 10 | 1 |",
 		"## plain-send-treedb TreeDB Post-Load Dwell",
@@ -1699,4 +1854,8 @@ func TestCollectCelestiaArtifactsParsesSummaryDecisionAndRuns(t *testing.T) {
 	if got := run.MaintenanceSummary["rewrite_queued_debt_exec_runs"]; got != float64(2) {
 		t.Fatalf("maintenance summary rewrite runs = %v, want 2", got)
 	}
+}
+
+func floatPtr(value float64) *float64 {
+	return &value
 }
