@@ -295,6 +295,7 @@ func TestSummarizePipelineSignalsPromotesAcceptedWindowCounters(t *testing.T) {
 func TestSummarizeLoadTestLogsParsesCatalystBlockTiming(t *testing.T) {
 	logs := strings.Join([]string{
 		"[truncated task logs; showing tail]",
+		`2026-07-08T21:45:28.650Z	INFO	completed sending transactions for block	{"block_number": 322, "txs_sent": 500, "expected_txs": 500}`,
 		`2026-07-08T21:45:28.732Z	DEBUG	received new block event	{"height": 711}`,
 		`2026-07-08T21:45:28.752Z	DEBUG	processing block	{"height": 711, "timestamp": "2026-07-08T21:45:27.841Z", "gas_limit": 75000000}`,
 		`2026-07-08T21:45:28.752Z	INFO	starting to send transactions for block	{"block_number": 323, "expected_txs": 500}`,
@@ -315,8 +316,8 @@ func TestSummarizeLoadTestLogsParsesCatalystBlockTiming(t *testing.T) {
 	if !timing.LogTruncated {
 		t.Fatalf("expected truncated log marker")
 	}
-	if timing.SendStartEvents != 2 || timing.SendCompleteEvents != 2 || timing.SendTxsSentTotal != 1000 || timing.SendExpectedTxsTotal != 1000 {
-		t.Fatalf("send counts = start %d complete %d sent %d expected %d, want 2/2/1000/1000", timing.SendStartEvents, timing.SendCompleteEvents, timing.SendTxsSentTotal, timing.SendExpectedTxsTotal)
+	if timing.SendStartEvents != 2 || timing.SendCompleteEvents != 3 || timing.SendTxsSentTotal != 1500 || timing.SendMatchedTxsTotal != 1000 || timing.SendExpectedTxsTotal != 1000 {
+		t.Fatalf("send counts = start %d complete %d sent %d matched %d expected %d, want 2/3/1500/1000/1000", timing.SendStartEvents, timing.SendCompleteEvents, timing.SendTxsSentTotal, timing.SendMatchedTxsTotal, timing.SendExpectedTxsTotal)
 	}
 	if timing.SendDurations == nil || timing.SendDurations.Count != 2 {
 		t.Fatalf("send durations = %+v, want 2 entries", timing.SendDurations)
@@ -329,6 +330,9 @@ func TestSummarizeLoadTestLogsParsesCatalystBlockTiming(t *testing.T) {
 	}
 	if !nearlyEqual(timing.SendTxsPerSecond, 1000/0.761) {
 		t.Fatalf("send tx/s = %v, want %v", timing.SendTxsPerSecond, 1000/0.761)
+	}
+	if !strings.Contains(strings.Join(timing.Notes, "\n"), "completion events did not have retained start events") {
+		t.Fatalf("expected unmatched completion note, got %v", timing.Notes)
 	}
 	if timing.BlockProcessingToProcessedDurations == nil || timing.BlockProcessingToProcessedDurations.Count != 2 {
 		t.Fatalf("process durations = %+v, want 2 entries", timing.BlockProcessingToProcessedDurations)

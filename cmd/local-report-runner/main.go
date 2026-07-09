@@ -519,6 +519,7 @@ type catalystLogTiming struct {
 	SendCompleteEvents                  int            `json:"send_complete_events,omitempty"`
 	SendExpectedTxsTotal                int            `json:"send_expected_txs_total,omitempty"`
 	SendTxsSentTotal                    int            `json:"send_txs_sent_total,omitempty"`
+	SendMatchedTxsTotal                 int            `json:"send_matched_txs_total,omitempty"`
 	SendDurations                       *durationStats `json:"send_durations,omitempty"`
 	SendTxsPerSecond                    float64        `json:"send_txs_per_second,omitempty"`
 	BlockEventEvents                    int            `json:"block_event_events,omitempty"`
@@ -4629,6 +4630,7 @@ type catalystLogTimingBuilder struct {
 	blockEvents             map[int]time.Time
 	blockProcessing         map[int]time.Time
 	sendDurations           []float64
+	unmatchedSendCompletes  int
 	eventToProcessing       []float64
 	processingToProcessed   []float64
 	chainTimestampToProcess []float64
@@ -4683,11 +4685,15 @@ func (b *catalystLogTimingBuilder) observe(line string) {
 			return
 		}
 		b.timing.SendCompleteEvents++
-		b.timing.SendTxsSentTotal += intField(line, "txs_sent")
+		sent := intField(line, "txs_sent")
+		b.timing.SendTxsSentTotal += sent
 		if started, ok := b.sendStarts[block]; ok && !at.Before(started) {
 			b.sendDurations = append(b.sendDurations, at.Sub(started).Seconds())
+			b.timing.SendMatchedTxsTotal += sent
 			delete(b.sendStarts, block)
 			delete(b.sendExpected, block)
+		} else {
+			b.unmatchedSendCompletes++
 		}
 	case strings.Contains(line, "received new block event"):
 		height := intField(line, "height")
@@ -4732,7 +4738,7 @@ func (b *catalystLogTimingBuilder) build() *catalystLogTiming {
 	}
 	b.timing.SendDurations = summarizeDurations(b.sendDurations)
 	if b.timing.SendDurations != nil && b.timing.SendDurations.TotalSeconds > 0 {
-		b.timing.SendTxsPerSecond = float64(b.timing.SendTxsSentTotal) / b.timing.SendDurations.TotalSeconds
+		b.timing.SendTxsPerSecond = float64(b.timing.SendMatchedTxsTotal) / b.timing.SendDurations.TotalSeconds
 	}
 	b.timing.BlockEventToProcessingDurations = summarizeDurations(b.eventToProcessing)
 	b.timing.BlockProcessingToProcessedDurations = summarizeDurations(b.processingToProcessed)
@@ -4742,6 +4748,9 @@ func (b *catalystLogTimingBuilder) build() *catalystLogTiming {
 	}
 	if len(b.sendStarts) > 0 {
 		b.timing.Notes = append(b.timing.Notes, fmt.Sprintf("%d send start events did not have retained completion events", len(b.sendStarts)))
+	}
+	if b.unmatchedSendCompletes > 0 {
+		b.timing.Notes = append(b.timing.Notes, fmt.Sprintf("%d send completion events did not have retained start events and were excluded from send tx/s", b.unmatchedSendCompletes))
 	}
 	if len(b.blockProcessing) > 0 {
 		b.timing.Notes = append(b.timing.Notes, fmt.Sprintf("%d block processing events did not have retained processed events", len(b.blockProcessing)))
@@ -6307,8 +6316,8 @@ func writeCatalystLogTimingMarkdown(b *strings.Builder, timing *catalystLogTimin
 		}
 		b.WriteByte('\n')
 	}
-	b.WriteString("| Log span s | Timestamped lines | Send blocks | Txs sent | Send total s | Send avg s | Send p95 s | Send max s | Send tx/s | Process blocks | Process total s | Process avg s | Process p95 s | Process max s | Event->process avg s | Chain ts->process avg s |\n")
-	b.WriteString("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+	b.WriteString("| Log span s | Timestamped lines | Send blocks | Txs sent | Matched send txs | Send total s | Send avg s | Send p95 s | Send max s | Matched send tx/s | Process blocks | Process total s | Process avg s | Process p95 s | Process max s | Event->process avg s | Chain ts->process avg s |\n")
+	b.WriteString("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 	send := timing.SendDurations
 	process := timing.BlockProcessingToProcessedDurations
 	eventToProcess := timing.BlockEventToProcessingDurations
@@ -6321,6 +6330,8 @@ func writeCatalystLogTimingMarkdown(b *strings.Builder, timing *catalystLogTimin
 	b.WriteString(optionalDurationCount(send))
 	b.WriteString(" | ")
 	b.WriteString(strconv.Itoa(timing.SendTxsSentTotal))
+	b.WriteString(" | ")
+	b.WriteString(strconv.Itoa(timing.SendMatchedTxsTotal))
 	b.WriteString(" | ")
 	b.WriteString(optionalDurationTotal(send))
 	b.WriteString(" | ")
