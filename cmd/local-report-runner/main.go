@@ -299,6 +299,7 @@ type storageSignal struct {
 	ApplicationDBBytesAfter         uint64         `json:"application_db_bytes_after,omitempty"`
 	ApplicationDBBytesDelta         int64          `json:"application_db_bytes_delta,omitempty"`
 	ModuleTimings                   []moduleTiming `json:"module_timings,omitempty"`
+	ConsensusStepTimings            []cadenceStage `json:"consensus_step_timings,omitempty"`
 }
 
 type loadWindowObservation struct {
@@ -321,6 +322,7 @@ type loadWindowObservation struct {
 	TreeDBStatsTimeline    []treeDBStatsTimelineSample `json:"treedb_stats_timeline,omitempty"`
 	StorageSignals         []storageSignal             `json:"storage_signal_summary,omitempty"`
 	PipelineSignals        []pipelineSignal            `json:"pipeline_signal_summary,omitempty"`
+	CadenceDiagnostics     []cadenceDiagnostic         `json:"cadence_diagnostics,omitempty"`
 	WallClockIntervals     []loadWindowInterval        `json:"wall_clock_intervals,omitempty"`
 	Accounting             []loadWindowAccounting      `json:"load_window_accounting,omitempty"`
 	PhaseOverlaps          []loadWindowPhaseOverlap    `json:"phase_overlaps,omitempty"`
@@ -412,6 +414,38 @@ type pipelineSignal struct {
 	AvgTxsPerFinalizeBlock        float64  `json:"avg_txs_per_finalize_block,omitempty"`
 	AvgTxsPerConsensusBlock       float64  `json:"avg_txs_per_consensus_block,omitempty"`
 	Notes                         []string `json:"notes,omitempty"`
+}
+
+type cadenceDiagnostic struct {
+	Name                                       string         `json:"name"`
+	WindowSeconds                              float64        `json:"window_seconds,omitempty"`
+	BlockCount                                 int            `json:"block_count,omitempty"`
+	AvgBlockIntervalSeconds                    float64        `json:"avg_block_interval_seconds,omitempty"`
+	AvgTxsPerBlock                             float64        `json:"avg_txs_per_block,omitempty"`
+	ABCIBlockStageSecondsPerBlock              float64        `json:"abci_block_stage_seconds_per_block,omitempty"`
+	CheckTxSecondsPerBlockEquivalent           float64        `json:"check_tx_seconds_per_block_equivalent,omitempty"`
+	ConsensusStepSecondsPerBlock               float64        `json:"consensus_step_seconds_per_block,omitempty"`
+	CadenceResidualAfterABCIBlockStagesSeconds float64        `json:"cadence_residual_after_abci_block_stages_seconds,omitempty"`
+	CadenceResidualPctOfBlockInterval          float64        `json:"cadence_residual_pct_of_block_interval,omitempty"`
+	ResidualFormula                            string         `json:"residual_formula,omitempty"`
+	ExactEventSpanCoverage                     bool           `json:"exact_event_span_coverage"`
+	Stages                                     []cadenceStage `json:"stages,omitempty"`
+	MissingEventSpans                          []string       `json:"missing_event_spans,omitempty"`
+	Notes                                      []string       `json:"notes,omitempty"`
+}
+
+type cadenceStage struct {
+	Name               string  `json:"name"`
+	Class              string  `json:"class,omitempty"`
+	Source             string  `json:"source,omitempty"`
+	Provenance         string  `json:"provenance,omitempty"`
+	Seconds            float64 `json:"seconds,omitempty"`
+	Count              int     `json:"count,omitempty"`
+	AvgSeconds         float64 `json:"avg_seconds,omitempty"`
+	PerBlockSeconds    float64 `json:"per_block_seconds,omitempty"`
+	IncludedInResidual bool    `json:"included_in_residual,omitempty"`
+	MissingReason      string  `json:"missing_reason,omitempty"`
+	Note               string  `json:"note,omitempty"`
 }
 
 type moduleTiming struct {
@@ -1604,6 +1638,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 	result.LoadTestStopped = loadResp.StoppedReason
 	result.LoadTestLogSummary = summarizeLoadTestLogs(loadResp.TaskLogs)
 	populateLoadWindowPipelineSignals(&result)
+	populateLoadWindowCadenceDiagnostics(&result)
 	populateLoadWindowAccounting(&result)
 	if shouldCollectTreeDBDwell(sc, appProfiles, treeDBPostLoadDwell) {
 		endPhase = startPhase(&result, "treedb_post_load_dwell", fmt.Sprintf("duration=%s", treeDBPostLoadDwell))
@@ -3904,6 +3939,7 @@ func summarizeStorageSignals(before, after []metricSnapshot, beforeSizes, afterS
 		signal.ProcessCPUSecondsDelta = metricDelta(deltas, "process_cpu_seconds_total")
 		fillSizeDelta(&signal, afterSnap.Name, beforeSizes, afterSizes)
 		signal.ModuleTimings = summarizeModuleTimings(deltas)
+		signal.ConsensusStepTimings = summarizeConsensusStepTimings(deltas)
 		out = append(out, signal)
 	}
 	if len(out) == 0 {
@@ -3945,6 +3981,44 @@ func summarizeModuleTimings(deltas map[string]float64) []moduleTiming {
 				return out[i].Module < out[j].Module
 			}
 			return out[i].Phase < out[j].Phase
+		}
+		return out[i].Seconds > out[j].Seconds
+	})
+	return out
+}
+
+func summarizeConsensusStepTimings(deltas map[string]float64) []cadenceStage {
+	const (
+		sumMetric   = "cometbft_consensus_step_duration_seconds_sum"
+		countMetric = "cometbft_consensus_step_duration_seconds_count"
+	)
+	var out []cadenceStage
+	for key, seconds := range deltas {
+		if prometheusMetricName(key) != sumMetric || seconds <= 0 {
+			continue
+		}
+		step := labelValue(key, "step")
+		if step == "" {
+			step = "unknown"
+		}
+		count := int(metricDeltaWithLabel(deltas, countMetric, "step", step))
+		stage := cadenceStage{
+			Name:       step,
+			Class:      "consensus_step",
+			Source:     "cometbft_consensus_step_duration_seconds",
+			Provenance: "prometheus_counter_delta",
+			Seconds:    seconds,
+			Count:      count,
+			Note:       "consensus step counters are reported as attribution signals, not exclusive wall-time buckets",
+		}
+		if count > 0 {
+			stage.AvgSeconds = seconds / float64(count)
+		}
+		out = append(out, stage)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Seconds == out[j].Seconds {
+			return out[i].Name < out[j].Name
 		}
 		return out[i].Seconds > out[j].Seconds
 	})
@@ -4509,11 +4583,166 @@ func populateLoadWindowPipelineSignals(result *runResult) {
 	result.LoadWindow.PipelineSignals = summarizePipelineSignals(*result.LoadWindow, result.LoadTestLogSummary)
 }
 
+func populateLoadWindowCadenceDiagnostics(result *runResult) {
+	if result == nil || result.LoadWindow == nil {
+		return
+	}
+	result.LoadWindow.CadenceDiagnostics = summarizeCadenceDiagnostics(*result.LoadWindow)
+}
+
 func populateLoadWindowAccounting(result *runResult) {
 	if result == nil || result.LoadWindow == nil {
 		return
 	}
 	result.LoadWindow.Accounting = summarizeLoadWindowAccounting(*result, *result.LoadWindow)
+}
+
+func summarizeCadenceDiagnostics(obs loadWindowObservation) []cadenceDiagnostic {
+	if len(obs.StorageSignals) == 0 {
+		return nil
+	}
+	pipelineByName := map[string]pipelineSignal{}
+	for _, signal := range obs.PipelineSignals {
+		pipelineByName[signal.Name] = signal
+	}
+	rows := make([]cadenceDiagnostic, 0, len(obs.StorageSignals))
+	for _, signal := range obs.StorageSignals {
+		pipeline := pipelineByName[signal.Name]
+		row := cadenceDiagnostic{
+			Name:                   signal.Name,
+			WindowSeconds:          obs.Seconds,
+			ResidualFormula:        "max(0, avg_block_interval_seconds - (commit + finalize_block + prepare_proposal + process_proposal seconds per block))",
+			ExactEventSpanCoverage: false,
+			MissingEventSpans: []string{
+				"DB adapter WriteSync / command-WAL / value-log / checkpoint spans are not exported as event-level load-window spans",
+				"CometBFT CAT mempool lock wait and lock hold spans are only visible in sampled block/mutex profiles",
+				"local BroadcastTxSync wait is not exported by Catalyst aggregate logs",
+				"blockstore and tx-index write spans are not separated from CometBFT state/block processing counters",
+			},
+			Notes: []string{
+				"block-stage residual is derived from Prometheus counter deltas, not exact event-level wall-clock tracing",
+				"CheckTx is reported as transaction-intake pressure and is not subtracted from block-stage residual",
+			},
+		}
+		row.BlockCount = cadenceBlockCount(signal, pipeline)
+		row.AvgBlockIntervalSeconds = cadenceAvgBlockInterval(signal, pipeline, row.BlockCount)
+		row.AvgTxsPerBlock = cadenceAvgTxsPerBlock(obs, signal, pipeline, row.BlockCount)
+		row.Stages = cadenceStages(signal, row.BlockCount)
+		for _, stage := range row.Stages {
+			if stage.IncludedInResidual {
+				row.ABCIBlockStageSecondsPerBlock += stage.PerBlockSeconds
+			}
+			if stage.Name == "check_tx" {
+				row.CheckTxSecondsPerBlockEquivalent = stage.PerBlockSeconds
+			}
+			if stage.Class == "consensus_step" {
+				row.ConsensusStepSecondsPerBlock += stage.PerBlockSeconds
+			}
+		}
+		if row.BlockCount == 0 {
+			row.MissingEventSpans = append(row.MissingEventSpans, "block count unavailable; cannot compute per-block cadence residual")
+			row.Notes = append(row.Notes, "consensus block interval count, commit count, and finalize count were unavailable")
+		}
+		if row.AvgBlockIntervalSeconds == 0 {
+			row.MissingEventSpans = append(row.MissingEventSpans, "average block interval unavailable; cannot compute cadence residual")
+		}
+		if row.AvgBlockIntervalSeconds > 0 {
+			row.CadenceResidualAfterABCIBlockStagesSeconds = nonNegative(row.AvgBlockIntervalSeconds - row.ABCIBlockStageSecondsPerBlock)
+			row.CadenceResidualPctOfBlockInterval = 100 * row.CadenceResidualAfterABCIBlockStagesSeconds / row.AvgBlockIntervalSeconds
+		}
+		if len(signal.ConsensusStepTimings) > 0 {
+			row.Notes = append(row.Notes, "consensus step counters are attribution signals and may overlap other cadence measurements")
+		} else {
+			row.MissingEventSpans = append(row.MissingEventSpans, "CometBFT consensus step duration counters unavailable in accepted-window metrics")
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	return rows
+}
+
+func cadenceBlockCount(signal storageSignal, pipeline pipelineSignal) int {
+	switch {
+	case signal.ConsensusBlockIntervalCount > 0:
+		return signal.ConsensusBlockIntervalCount
+	case pipeline.ConsensusBlockIntervalCount > 0:
+		return pipeline.ConsensusBlockIntervalCount
+	case signal.ABCICommitCount > 0:
+		return signal.ABCICommitCount
+	case signal.ABCIFinalizeBlockCount > 0:
+		return signal.ABCIFinalizeBlockCount
+	default:
+		return 0
+	}
+}
+
+func cadenceAvgBlockInterval(signal storageSignal, pipeline pipelineSignal, blockCount int) float64 {
+	switch {
+	case blockCount > 0 && signal.ConsensusBlockIntervalSeconds > 0:
+		return signal.ConsensusBlockIntervalSeconds / float64(blockCount)
+	case pipeline.AvgBlockIntervalSeconds > 0:
+		return pipeline.AvgBlockIntervalSeconds
+	default:
+		return 0
+	}
+}
+
+func cadenceAvgTxsPerBlock(obs loadWindowObservation, signal storageSignal, pipeline pipelineSignal, blockCount int) float64 {
+	switch {
+	case pipeline.AvgTxsPerConsensusBlock > 0:
+		return pipeline.AvgTxsPerConsensusBlock
+	case blockCount > 0 && signal.ConsensusTotalTxsDelta > 0:
+		return signal.ConsensusTotalTxsDelta / float64(blockCount)
+	case blockCount > 0 && obs.IncludedTransactions > 0:
+		return float64(obs.IncludedTransactions) / float64(blockCount)
+	default:
+		return 0
+	}
+}
+
+func cadenceStages(signal storageSignal, blockCount int) []cadenceStage {
+	var stages []cadenceStage
+	stages = append(stages,
+		abciCadenceStage("commit", signal.ABCICommitSeconds, signal.ABCICommitCount, blockCount, true),
+		abciCadenceStage("finalize_block", signal.ABCIFinalizeBlockSeconds, signal.ABCIFinalizeBlockCount, blockCount, true),
+		abciCadenceStage("prepare_proposal", signal.ABCIPrepareProposalSeconds, signal.ABCIPrepareProposalCount, blockCount, true),
+		abciCadenceStage("process_proposal", signal.ABCIProcessProposalSeconds, signal.ABCIProcessProposalCount, blockCount, true),
+		abciCadenceStage("check_tx", signal.ABCICheckTxSeconds, signal.ABCICheckTxCount, blockCount, false),
+	)
+	for _, step := range signal.ConsensusStepTimings {
+		if blockCount > 0 {
+			step.PerBlockSeconds = step.Seconds / float64(blockCount)
+		}
+		stages = append(stages, step)
+	}
+	return stages
+}
+
+func abciCadenceStage(name string, seconds float64, count, blockCount int, included bool) cadenceStage {
+	stage := cadenceStage{
+		Name:               name,
+		Class:              "abci_method",
+		Source:             "cometbft_abci_connection_method_timing_seconds",
+		Provenance:         "prometheus_counter_delta",
+		Seconds:            seconds,
+		Count:              count,
+		IncludedInResidual: included,
+	}
+	if included {
+		stage.Class = "abci_block_stage"
+	} else {
+		stage.Class = "abci_transaction_intake"
+		stage.Note = "reported separately; CheckTx can run on the transaction intake path and is not an exclusive block-stage bucket"
+	}
+	if count > 0 {
+		stage.AvgSeconds = seconds / float64(count)
+	}
+	if blockCount > 0 {
+		stage.PerBlockSeconds = seconds / float64(blockCount)
+	} else if seconds > 0 {
+		stage.MissingReason = "block count unavailable"
+	}
+	return stage
 }
 
 func summarizeLoadWindowAccounting(result runResult, obs loadWindowObservation) []loadWindowAccounting {
@@ -5428,6 +5657,7 @@ func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
 	writeLoadWindowPhaseOverlapsMarkdown(b, obs.PhaseOverlaps)
 	writeLoadWindowAccountingMarkdown(b, obs.Accounting)
 	writePipelineSignalsMarkdown(b, obs.PipelineSignals)
+	writeCadenceDiagnosticsMarkdown(b, obs.CadenceDiagnostics)
 	writeTreeDBStatsTimelineMarkdown(b, obs.TreeDBStatsTimeline)
 
 	rows := metricDeltaRows(obs.MetricDeltas)
@@ -5637,6 +5867,97 @@ func accountingMissingSummary(row loadWindowAccounting) string {
 		parts = append(parts, "loadgen_wait: "+row.LoadgenClientWaitMissingReason)
 	}
 	return strings.Join(parts, "; ")
+}
+
+func writeCadenceDiagnosticsMarkdown(b *strings.Builder, rows []cadenceDiagnostic) {
+	if len(rows) == 0 {
+		return
+	}
+	b.WriteString("### Accepted-Window Cadence Diagnostics\n\n")
+	b.WriteString("The block-stage residual is the average block interval minus measured ABCI block-stage averages: commit, finalize_block, prepare_proposal, and process_proposal. CheckTx is reported separately as transaction-intake pressure and is not subtracted from the block-stage residual.\n\n")
+	b.WriteString("| Node | Blocks | Block interval s | Avg tx/block | ABCI block-stage s/block | CheckTx equiv s/block | Consensus step s/block | Residual s/block | Residual % | Exact spans | Missing spans |\n")
+	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n")
+	for _, row := range rows {
+		b.WriteString("| ")
+		b.WriteString(mdCell(row.Name))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(row.BlockCount))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.AvgBlockIntervalSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.AvgTxsPerBlock))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ABCIBlockStageSecondsPerBlock))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.CheckTxSecondsPerBlockEquivalent))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.ConsensusStepSecondsPerBlock))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.CadenceResidualAfterABCIBlockStagesSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.CadenceResidualPctOfBlockInterval))
+		b.WriteString(" | ")
+		b.WriteString(strconv.FormatBool(row.ExactEventSpanCoverage))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(strings.Join(row.MissingEventSpans, "; ")))
+		b.WriteString(" |\n")
+	}
+	b.WriteByte('\n')
+
+	var stages []struct {
+		node  string
+		stage cadenceStage
+	}
+	for _, row := range rows {
+		for _, stage := range row.Stages {
+			if stage.Seconds == 0 && stage.Count == 0 && stage.MissingReason == "" {
+				continue
+			}
+			stages = append(stages, struct {
+				node  string
+				stage cadenceStage
+			}{node: row.Name, stage: stage})
+		}
+	}
+	if len(stages) == 0 {
+		return
+	}
+	b.WriteString("### Accepted-Window Cadence Diagnostic Stages\n\n")
+	b.WriteString("| Node | Stage | Class | Source | Provenance | Total s | Count | Avg s | Per-block s | Residual bucket | Note |\n")
+	b.WriteString("| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |\n")
+	for _, row := range stages {
+		note := row.stage.Note
+		if row.stage.MissingReason != "" {
+			if note != "" {
+				note += "; "
+			}
+			note += row.stage.MissingReason
+		}
+		b.WriteString("| ")
+		b.WriteString(mdCell(row.node))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(row.stage.Name))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(row.stage.Class))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(row.stage.Source))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(row.stage.Provenance))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.stage.Seconds))
+		b.WriteString(" | ")
+		b.WriteString(strconv.Itoa(row.stage.Count))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.stage.AvgSeconds))
+		b.WriteString(" | ")
+		b.WriteString(metricFloat(row.stage.PerBlockSeconds))
+		b.WriteString(" | ")
+		b.WriteString(strconv.FormatBool(row.stage.IncludedInResidual))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(note))
+		b.WriteString(" |\n")
+	}
+	b.WriteByte('\n')
 }
 
 func writeTreeDBStatsTimelineMarkdown(b *strings.Builder, samples []treeDBStatsTimelineSample) {

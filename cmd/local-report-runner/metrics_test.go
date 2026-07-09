@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,10 @@ import (
 
 	ctlt "github.com/skip-mev/catalyst/chains/types"
 )
+
+func nearlyEqual(got, want float64) bool {
+	return math.Abs(got-want) < 1e-9
+}
 
 func TestParsePrometheusMetricsKeepsSelectedSeries(t *testing.T) {
 	text := `
@@ -284,6 +289,100 @@ func TestSummarizePipelineSignalsPromotesAcceptedWindowCounters(t *testing.T) {
 	}
 	if len(row.Notes) == 0 {
 		t.Fatalf("expected send-gap note")
+	}
+}
+
+func TestSummarizeConsensusStepTimings(t *testing.T) {
+	deltas := map[string]float64{
+		`cometbft_consensus_step_duration_seconds_sum{chain_id="chain",step="Propose"}`:   1.5,
+		`cometbft_consensus_step_duration_seconds_count{chain_id="chain",step="Propose"}`: 3,
+		`cometbft_consensus_step_duration_seconds_sum{chain_id="chain",step="Prevote"}`:   0.75,
+		`cometbft_consensus_step_duration_seconds_count{chain_id="chain",step="Prevote"}`: 3,
+	}
+	rows := summarizeConsensusStepTimings(deltas)
+	if len(rows) != 2 {
+		t.Fatalf("rows len=%d want 2: %+v", len(rows), rows)
+	}
+	if rows[0].Name != "Propose" || rows[0].Class != "consensus_step" || rows[0].Seconds != 1.5 || rows[0].Count != 3 || rows[0].AvgSeconds != 0.5 {
+		t.Fatalf("propose row = %+v, want 1.5s count 3 avg 0.5", rows[0])
+	}
+	if rows[1].Name != "Prevote" || rows[1].Seconds != 0.75 || rows[1].AvgSeconds != 0.25 {
+		t.Fatalf("prevote row = %+v, want 0.75s avg 0.25", rows[1])
+	}
+}
+
+func TestSummarizeCadenceDiagnosticsSeparatesBlockStagesFromResidual(t *testing.T) {
+	obs := loadWindowObservation{
+		Seconds:                10,
+		IncludedTransactions:   1000,
+		SuccessfulTransactions: 1000,
+		StorageSignals: []storageSignal{{
+			Name:                          "validator-0",
+			ABCICommitSeconds:             1,
+			ABCICommitCount:               10,
+			ABCIFinalizeBlockSeconds:      2,
+			ABCIFinalizeBlockCount:        10,
+			ABCIPrepareProposalSeconds:    0.5,
+			ABCIPrepareProposalCount:      10,
+			ABCIProcessProposalSeconds:    0.25,
+			ABCIProcessProposalCount:      10,
+			ABCICheckTxSeconds:            3,
+			ABCICheckTxCount:              1000,
+			ConsensusBlockIntervalSeconds: 10,
+			ConsensusBlockIntervalCount:   10,
+			ConsensusTotalTxsDelta:        1000,
+			ConsensusStepTimings: []cadenceStage{{
+				Name:       "Propose",
+				Class:      "consensus_step",
+				Source:     "cometbft_consensus_step_duration_seconds",
+				Provenance: "prometheus_counter_delta",
+				Seconds:    0.8,
+				Count:      10,
+				AvgSeconds: 0.08,
+			}},
+		}},
+		PipelineSignals: []pipelineSignal{{
+			Name:                          "validator-0",
+			AvgTxsPerConsensusBlock:       100,
+			AvgBlockIntervalSeconds:       1,
+			ConsensusBlockIntervalCount:   10,
+			ConsensusBlockIntervalSeconds: 10,
+		}},
+	}
+
+	rows := summarizeCadenceDiagnostics(obs)
+	if len(rows) != 1 {
+		t.Fatalf("cadence rows len=%d want 1", len(rows))
+	}
+	row := rows[0]
+	if row.BlockCount != 10 || row.AvgBlockIntervalSeconds != 1 || row.AvgTxsPerBlock != 100 {
+		t.Fatalf("block shape = count %d interval %v tx/block %v, want 10/1/100", row.BlockCount, row.AvgBlockIntervalSeconds, row.AvgTxsPerBlock)
+	}
+	if !nearlyEqual(row.ABCIBlockStageSecondsPerBlock, 0.375) {
+		t.Fatalf("block-stage seconds/block = %v, want 0.375", row.ABCIBlockStageSecondsPerBlock)
+	}
+	if !nearlyEqual(row.CheckTxSecondsPerBlockEquivalent, 0.3) {
+		t.Fatalf("checktx seconds/block = %v, want 0.3", row.CheckTxSecondsPerBlockEquivalent)
+	}
+	if !nearlyEqual(row.ConsensusStepSecondsPerBlock, 0.08) {
+		t.Fatalf("consensus step seconds/block = %v, want 0.08", row.ConsensusStepSecondsPerBlock)
+	}
+	if !nearlyEqual(row.CadenceResidualAfterABCIBlockStagesSeconds, 0.625) {
+		t.Fatalf("residual seconds/block = %v, want 0.625", row.CadenceResidualAfterABCIBlockStagesSeconds)
+	}
+	if !nearlyEqual(row.CadenceResidualPctOfBlockInterval, 62.5) {
+		t.Fatalf("residual percent = %v, want 62.5", row.CadenceResidualPctOfBlockInterval)
+	}
+	if row.ExactEventSpanCoverage {
+		t.Fatalf("expected exact event coverage to be false until event-level spans exist")
+	}
+	if len(row.MissingEventSpans) == 0 {
+		t.Fatalf("expected missing event span owners to be named")
+	}
+	for _, stage := range row.Stages {
+		if stage.Name == "check_tx" && stage.IncludedInResidual {
+			t.Fatalf("check_tx must not be included in block-stage residual: %+v", stage)
+		}
 	}
 }
 
@@ -889,6 +988,30 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 					AvgFinalizeBlockSeconds: 0.2,
 					AvgCommitSeconds:        0.05,
 				}},
+				CadenceDiagnostics: []cadenceDiagnostic{{
+					Name:                             "validator-0",
+					BlockCount:                       10,
+					AvgBlockIntervalSeconds:          1.25,
+					AvgTxsPerBlock:                   10,
+					ABCIBlockStageSecondsPerBlock:    0.25,
+					CheckTxSecondsPerBlockEquivalent: 0.01,
+					CadenceResidualAfterABCIBlockStagesSeconds: 1,
+					CadenceResidualPctOfBlockInterval:          80,
+					MissingEventSpans: []string{
+						"DB adapter WriteSync / command-WAL / value-log / checkpoint spans are not exported as event-level load-window spans",
+					},
+					Stages: []cadenceStage{{
+						Name:               "commit",
+						Class:              "abci_block_stage",
+						Source:             "cometbft_abci_connection_method_timing_seconds",
+						Provenance:         "prometheus_counter_delta",
+						Seconds:            0.5,
+						Count:              10,
+						AvgSeconds:         0.05,
+						PerBlockSeconds:    0.05,
+						IncludedInResidual: true,
+					}},
+				}},
 				MetricDeltas: []metricDeltaSnapshot{{
 					Name: "validator-0",
 					Metrics: map[string]metricDeltaValue{
@@ -929,6 +1052,10 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 		"| run_load_test | crosses_window_start | 15 | 2.5 | 12.5 | 0 | wallets=100 |",
 		"### Accepted-Window Transaction Pipeline Summary",
 		"| validator-0 | 120 | 100 | 100 | 20 | 10 | 10 | 1.25 | 0.001 | 0.2 | 0.05 |",
+		"### Accepted-Window Cadence Diagnostics",
+		"| validator-0 | 10 | 1.25 | 10 | 0.25 | 0.01 | 0 | 1 | 80 | false | DB adapter WriteSync / command-WAL / value-log / checkpoint spans are not exported as event-level load-window spans |",
+		"### Accepted-Window Cadence Diagnostic Stages",
+		"| validator-0 | commit | abci_block_stage | cometbft_abci_connection_method_timing_seconds | prometheus_counter_delta | 0.5 | 10 | 0.05 | 0.05 | true |  |",
 		"### Accepted-Window Metric Deltas",
 		"treedb_vlog_write_seconds_sum",
 		"| validator-0 | treedb_vlog_write_seconds_sum | 1 | 3.25 | 2.25 |",
