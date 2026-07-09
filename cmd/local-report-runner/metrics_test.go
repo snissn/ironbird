@@ -359,8 +359,9 @@ func TestSummarizePipelineSignalsPromotesCatalystBlockTiming(t *testing.T) {
 	}
 	logs := loadTestLogSummary{
 		CatalystTiming: &catalystLogTiming{
-			SendTxsSentTotal: 1000,
-			SendTxsPerSecond: 1250,
+			SendTxsSentTotal:    1500,
+			SendMatchedTxsTotal: 1000,
+			SendTxsPerSecond:    1250,
 			SendDurations: &durationStats{
 				Count:        2,
 				TotalSeconds: 0.8,

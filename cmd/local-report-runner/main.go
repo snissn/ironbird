@@ -5156,7 +5156,7 @@ func summarizePipelineSignals(obs loadWindowObservation, logs loadTestLogSummary
 			row.AvgTxsPerConsensusBlock = signal.ConsensusTotalTxsDelta / float64(row.ConsensusBlockIntervalCount)
 		}
 		if logs.CatalystTiming != nil {
-			row.CatalystSendTxs = logs.CatalystTiming.SendTxsSentTotal
+			row.CatalystSendTxs = logs.CatalystTiming.SendMatchedTxsTotal
 			row.CatalystSendTxsPerSecond = logs.CatalystTiming.SendTxsPerSecond
 			if logs.CatalystTiming.SendDurations != nil {
 				row.CatalystSendBlocks = logs.CatalystTiming.SendDurations.Count
