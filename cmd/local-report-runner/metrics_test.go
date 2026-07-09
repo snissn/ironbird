@@ -521,6 +521,249 @@ func TestSummarizeLoadWindowAccountingUsesABCIIntervals(t *testing.T) {
 	}
 }
 
+func TestAppendMetricDeltaWallClockIntervalsFromABCICounters(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	before := []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`:       10,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="check_tx"}`:         0.10,
+			`cometbft_abci_connection_method_timing_seconds_count{method="finalize_block"}`: 4,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="finalize_block"}`:   1.20,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="commit"}`:           0.30,
+		},
+	}}
+	after := []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`:       13,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="check_tx"}`:         0.15,
+			`cometbft_abci_connection_method_timing_seconds_count{method="finalize_block"}`: 4,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="finalize_block"}`:   1.20,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="commit"}`:           0.35,
+		},
+	}}
+
+	intervals := appendMetricDeltaWallClockIntervals(nil, base, before, base.Add(500*time.Millisecond), after)
+	if len(intervals) != 2 {
+		t.Fatalf("intervals len=%d want 2: %+v", len(intervals), intervals)
+	}
+	if intervals[0].Method != "check_tx" || intervals[1].Method != "commit" {
+		t.Fatalf("methods = %q/%q, want check_tx/commit", intervals[0].Method, intervals[1].Method)
+	}
+	for _, interval := range intervals {
+		if interval.Class != "abci" || interval.Provenance != "bounded_sample" {
+			t.Fatalf("interval provenance = %+v, want ABCI bounded_sample", interval)
+		}
+		if interval.Started != base || interval.Ended != base.Add(500*time.Millisecond) || interval.Seconds != 0.5 {
+			t.Fatalf("interval timing = %+v, want 500ms sample window", interval)
+		}
+	}
+}
+
+func TestMetricSamplePointsSeedFirstScrapeWithoutInterval(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	first := []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 10,
+		},
+	}}
+
+	var intervals []loadWindowInterval
+	previous := seedMetricSamplePoints(base, first)
+	if len(previous) != 1 {
+		t.Fatalf("seeded samples len=%d want 1", len(previous))
+	}
+	intervals, previous = appendMetricDeltaWallClockIntervalsFromSamples(intervals, previous, base.Add(500*time.Millisecond), []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 10,
+		},
+	}})
+	if len(intervals) != 0 {
+		t.Fatalf("unchanged first-followup scrape emitted intervals: %+v", intervals)
+	}
+	if previous["validator-0"].at != base.Add(500*time.Millisecond) {
+		t.Fatalf("previous sample time = %s, want followup scrape time", previous["validator-0"].at)
+	}
+}
+
+func TestMetricSamplePointsPreserveLastGoodAcrossScrapeFailure(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	previous := seedMetricSamplePoints(base, []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="commit"}`: 0,
+		},
+	}})
+
+	var intervals []loadWindowInterval
+	intervals, previous = appendMetricDeltaWallClockIntervalsFromSamples(intervals, previous, base.Add(500*time.Millisecond), []metricSnapshot{{
+		Name:  "validator-0",
+		Error: "connection refused",
+	}})
+	if len(intervals) != 0 {
+		t.Fatalf("failed scrape emitted intervals: %+v", intervals)
+	}
+	if previous["validator-0"].at != base {
+		t.Fatalf("failed scrape advanced previous sample to %s, want %s", previous["validator-0"].at, base)
+	}
+
+	intervals, previous = appendMetricDeltaWallClockIntervalsFromSamples(intervals, previous, base.Add(time.Second), []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="commit"}`: 1,
+		},
+	}})
+	if len(intervals) != 1 {
+		t.Fatalf("intervals len=%d want 1: %+v", len(intervals), intervals)
+	}
+	if intervals[0].Started != base || intervals[0].Ended != base.Add(time.Second) || intervals[0].Seconds != 1 {
+		t.Fatalf("interval timing = %+v, want last-good to success window", intervals[0])
+	}
+	if previous["validator-0"].at != base.Add(time.Second) {
+		t.Fatalf("successful scrape did not advance previous sample: %s", previous["validator-0"].at)
+	}
+}
+
+func TestUsableMetricSnapshotsDropsFailedFreshBaselineSamples(t *testing.T) {
+	fresh := []metricSnapshot{
+		{
+			Name: "validator-0",
+			URL:  "http://new-0/metrics",
+			Metrics: map[string]float64{
+				`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 12,
+			},
+		},
+		{
+			Name:  "validator-1",
+			URL:   "http://new-1/metrics",
+			Error: "connection refused",
+		},
+	}
+
+	baseline := usableMetricSnapshots(fresh)
+	if len(baseline) != 1 {
+		t.Fatalf("baseline len=%d want 1: %+v", len(baseline), baseline)
+	}
+	byName := metricSnapshotsByName(baseline)
+	if got := byName["validator-0"].Metrics[`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`]; got != 12 {
+		t.Fatalf("validator-0 baseline = %v, want fresh value 12", got)
+	}
+	if byName["validator-0"].URL != "http://new-0/metrics" {
+		t.Fatalf("validator-0 URL = %q, want fresh URL", byName["validator-0"].URL)
+	}
+	if byName["validator-1"] != nil {
+		t.Fatalf("failed validator-1 should not be used as a fresh load-window baseline: %+v", byName["validator-1"])
+	}
+}
+
+func TestAppendMissingUsableMetricBaselineSnapshotsAddsOnlyUnknownNodes(t *testing.T) {
+	baseline := []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 10,
+		},
+	}}
+	current := []metricSnapshot{
+		{
+			Name: "validator-0",
+			Metrics: map[string]float64{
+				`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 99,
+			},
+		},
+		{
+			Name: "validator-1",
+			Metrics: map[string]float64{
+				`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 20,
+			},
+		},
+		{
+			Name:  "validator-2",
+			Error: "connection refused",
+		},
+	}
+
+	merged := appendMissingUsableMetricBaselineSnapshots(baseline, current)
+	if len(merged) != 2 {
+		t.Fatalf("merged len=%d want 2: %+v", len(merged), merged)
+	}
+	byName := metricSnapshotsByName(merged)
+	if got := byName["validator-0"].Metrics[`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`]; got != 10 {
+		t.Fatalf("validator-0 baseline = %v, want preserved original value 10", got)
+	}
+	if got := byName["validator-1"].Metrics[`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`]; got != 20 {
+		t.Fatalf("validator-1 baseline = %v, want first usable value 20", got)
+	}
+	if byName["validator-2"] != nil {
+		t.Fatalf("failed validator-2 should not be added as a missing baseline: %+v", byName["validator-2"])
+	}
+}
+
+func TestBoundedSampleABCIIntervalsFeedAccounting(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	before := []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 0,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="check_tx"}`:   0,
+			`cometbft_abci_connection_method_timing_seconds_count{method="commit"}`:   0,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="commit"}`:     0,
+		},
+	}}
+	first := []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 4,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="check_tx"}`:   0.2,
+			`cometbft_abci_connection_method_timing_seconds_count{method="commit"}`:   0,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="commit"}`:     0,
+		},
+	}}
+	second := []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 4,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="check_tx"}`:   0.2,
+			`cometbft_abci_connection_method_timing_seconds_count{method="commit"}`:   1,
+			`cometbft_abci_connection_method_timing_seconds_sum{method="commit"}`:     0.1,
+		},
+	}}
+
+	intervals := appendMetricDeltaWallClockIntervals(nil, base, before, base.Add(500*time.Millisecond), first)
+	intervals = appendMetricDeltaWallClockIntervals(intervals, base.Add(500*time.Millisecond), first, base.Add(time.Second), second)
+	obs := loadWindowObservation{
+		StartedAt: base,
+		EndedAt:   base.Add(time.Second),
+		Seconds:   1,
+		StorageSignals: []storageSignal{{
+			Name:                "validator-0",
+			ABCIObservedSeconds: 0.3,
+			ABCICheckTxSeconds:  0.2,
+			ABCICommitSeconds:   0.1,
+		}},
+		WallClockIntervals: intervals,
+	}
+	rows := summarizeLoadWindowAccounting(runResult{}, obs)
+	if len(rows) != 1 {
+		t.Fatalf("accounting rows len=%d want 1", len(rows))
+	}
+	row := rows[0]
+	if row.ABCIBusyUnionSeconds == nil || *row.ABCIBusyUnionSeconds != 1 {
+		t.Fatalf("ABCI bounded union = %v, want 1", row.ABCIBusyUnionSeconds)
+	}
+	if row.ABCIIntervalCount != 2 || row.ABCIIntervalProvenance != "bounded_sample" {
+		t.Fatalf("interval count/provenance = %d/%q, want 2/bounded_sample", row.ABCIIntervalCount, row.ABCIIntervalProvenance)
+	}
+	if row.ValidatorNonABCIWallSeconds == nil || *row.ValidatorNonABCIWallSeconds != 0 {
+		t.Fatalf("bounded non-ABCI wall = %v, want 0", row.ValidatorNonABCIWallSeconds)
+	}
+	if row.UnaccountedResidualClassification != "interval_union_based" {
+		t.Fatalf("residual classification = %q, want interval_union_based", row.UnaccountedResidualClassification)
+	}
+}
+
 func TestMetricDeltaSnapshotsPreserveBeforeAfterDelta(t *testing.T) {
 	before := []metricSnapshot{{
 		Name: "validator-0",
