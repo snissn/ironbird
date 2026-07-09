@@ -119,6 +119,8 @@ func TestSummarizeStorageSignalsExtractsNodeCadenceMetrics(t *testing.T) {
 			"cometbft_consensus_commit_record_metrics_seconds_count":   3,
 			"cometbft_consensus_commit_update_state_seconds_sum":       0.1,
 			"cometbft_consensus_commit_update_state_seconds_count":     3,
+			"cometbft_state_save_tx_info_seconds_sum":                  0.45,
+			"cometbft_state_save_tx_info_seconds_count":                3,
 			"cometbft_state_mempool_lock_wait_seconds_sum":             0.15,
 			"cometbft_state_mempool_lock_wait_seconds_count":           3,
 			"cometbft_tx_indexer_tx_index_seconds_sum":                 0.7,
@@ -149,6 +151,9 @@ func TestSummarizeStorageSignalsExtractsNodeCadenceMetrics(t *testing.T) {
 	}
 	if stage, ok := cadenceStageByName(got.ExactCommitStageTimings, "mempool lock wait"); !ok || stage.Parent != "state block commit" || !nearlyEqual(stage.Seconds, 0.15) {
 		t.Fatalf("mempool lock stage=%+v ok=%v, want exact nested stage", stage, ok)
+	}
+	if stage, ok := cadenceStageByName(got.ExactCommitStageTimings, "state save tx info"); !ok || stage.Parent != "state apply block" || !nearlyEqual(stage.Seconds, 0.45) {
+		t.Fatalf("save tx info stage=%+v ok=%v, want exact nested stage", stage, ok)
 	}
 }
 

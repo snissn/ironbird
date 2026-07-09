@@ -1325,8 +1325,8 @@ const (
 	simappIAVLRef         = "12a26715119bb3ea55289ffd7b256161effc7b8b"
 	simappCometDBVersion  = "v0.0.0-20260701074104-b4f87847a725"
 	simappCometDBRef      = "b4f87847a725f92a046d927ce4a0f5b08b965995"
-	simappCometBFTVersion = "85fd73a70f3e466289dcd6dc5a8d7bb6b00f0f0b"
-	simappCometBFTRef     = "85fd73a70f3e466289dcd6dc5a8d7bb6b00f0f0b"
+	simappCometBFTVersion = "7453f4166fa988a768874861235c6013f75837d2"
+	simappCometBFTRef     = "7453f4166fa988a768874861235c6013f75837d2"
 )
 
 func simappDependencyPins(includeCometDB bool) []dependencyPin {
@@ -1449,7 +1449,7 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend, txIndexer s
 
 func simappImageTag(includeCometDB bool) string {
 	if includeCometDB {
-		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-2182e84-comet-85fd73a"
+		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-2182e84-comet-7453f41"
 	}
 	return "ironbird-report:snissn-sdk-4948247-cosmosdb-6ddcb75-gomap-2182e84"
 }
@@ -4075,6 +4075,7 @@ var exactCommitMetricSpecs = []exactCommitMetricSpec{
 	{Name: "state apply block", Parent: "commit apply block", Class: "block_execution", Metric: "cometbft_state_apply_block_seconds", Note: "complete state executor ApplyVerifiedBlock path"},
 	{Name: "state finalize block", Parent: "state apply block", Class: "abci_block_execution", Metric: "cometbft_state_finalize_block_seconds", Note: "FinalizeBlock call through the consensus ABCI connection"},
 	{Name: "state save finalize response", Parent: "state apply block", Class: "state_persistence", Metric: "cometbft_state_save_finalize_block_response_seconds", Note: "persist FinalizeBlock response"},
+	{Name: "state save tx info", Parent: "state apply block", Class: "node_db_blockstore", Metric: "cometbft_state_save_tx_info_seconds", Note: "persist Celestia per-transaction blockstore lookup records with one synchronous batch per block"},
 	{Name: "state update", Parent: "state apply block", Class: "state_transition", Metric: "cometbft_state_update_state_seconds", Note: "derive the next in-memory consensus state"},
 	{Name: "state block commit", Parent: "state apply block", Class: "app_commit", Metric: "cometbft_state_block_commit_seconds", Note: "BlockExecutor.Commit including mempool synchronization"},
 	{Name: "mempool lock wait", Parent: "state block commit", Class: "mempool_contention", Metric: "cometbft_state_mempool_lock_wait_seconds", Note: "time waiting to acquire the mempool lock"},
