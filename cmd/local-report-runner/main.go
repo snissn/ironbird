@@ -1325,8 +1325,8 @@ const (
 	simappIAVLRef         = "12a26715119bb3ea55289ffd7b256161effc7b8b"
 	simappCometDBVersion  = "v0.0.0-20260701074104-b4f87847a725"
 	simappCometDBRef      = "b4f87847a725f92a046d927ce4a0f5b08b965995"
-	simappCometBFTVersion = "f8f72b337daf21a856bb15ac0a454b008796f872"
-	simappCometBFTRef     = "f8f72b337daf21a856bb15ac0a454b008796f872"
+	simappCometBFTVersion = "85fd73a70f3e466289dcd6dc5a8d7bb6b00f0f0b"
+	simappCometBFTRef     = "85fd73a70f3e466289dcd6dc5a8d7bb6b00f0f0b"
 )
 
 func simappDependencyPins(includeCometDB bool) []dependencyPin {
@@ -1449,7 +1449,7 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend, txIndexer s
 
 func simappImageTag(includeCometDB bool) string {
 	if includeCometDB {
-		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-2182e84-comet-f8f72b3"
+		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-2182e84-comet-85fd73a"
 	}
 	return "ironbird-report:snissn-sdk-4948247-cosmosdb-6ddcb75-gomap-2182e84"
 }
