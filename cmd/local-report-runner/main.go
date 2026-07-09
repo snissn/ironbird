@@ -2321,32 +2321,97 @@ func sortedSetSummary(values map[string]struct{}) string {
 	return strings.Join(out, ", ")
 }
 
+type metricSamplePoint struct {
+	at       time.Time
+	snapshot metricSnapshot
+}
+
 func appendMetricDeltaWallClockIntervals(out []loadWindowInterval, beforeAt time.Time, before []metricSnapshot, afterAt time.Time, after []metricSnapshot) []loadWindowInterval {
-	if beforeAt.IsZero() || afterAt.IsZero() || !afterAt.After(beforeAt) || len(before) == 0 || len(after) == 0 {
-		return out
+	previous := seedMetricSamplePoints(beforeAt, before)
+	out, _ = appendMetricDeltaWallClockIntervalsFromSamples(out, previous, afterAt, after)
+	return out
+}
+
+func appendMetricDeltaWallClockIntervalsFromSamples(out []loadWindowInterval, previous map[string]metricSamplePoint, currentAt time.Time, current []metricSnapshot) ([]loadWindowInterval, map[string]metricSamplePoint) {
+	if previous == nil {
+		previous = map[string]metricSamplePoint{}
 	}
-	beforeByName := metricSnapshotsByName(before)
-	for _, afterSnap := range after {
-		beforeSnap := beforeByName[afterSnap.Name]
-		if beforeSnap == nil || len(beforeSnap.Metrics) == 0 || len(afterSnap.Metrics) == 0 {
+	if currentAt.IsZero() || len(current) == 0 {
+		return out, previous
+	}
+	for _, afterSnap := range current {
+		if !metricSnapshotUsable(afterSnap) {
 			continue
 		}
-		deltas := metricDeltas(beforeSnap.Metrics, afterSnap.Metrics)
-		for _, method := range abciMethodsWithActivity(deltas) {
-			out = append(out, loadWindowInterval{
-				Name:       afterSnap.Name,
-				Class:      "abci",
-				Method:     method,
-				Source:     "cometbft_abci_connection_method_timing_seconds",
-				Provenance: "bounded_sample",
-				Started:    beforeAt,
-				Ended:      afterAt,
-				Seconds:    afterAt.Sub(beforeAt).Seconds(),
-				Note:       "Prometheus counter changed during this scrape interval; interval is an upper bound, not an event-level ABCI span",
-			})
+		if prior, ok := previous[afterSnap.Name]; ok && currentAt.After(prior.at) {
+			out = appendMetricSnapshotDeltaIntervals(out, prior.at, prior.snapshot, currentAt, afterSnap)
+		}
+		previous[afterSnap.Name] = metricSamplePoint{
+			at:       currentAt,
+			snapshot: cloneMetricSnapshot(afterSnap),
 		}
 	}
+	return out, previous
+}
+
+func appendMetricSnapshotDeltaIntervals(out []loadWindowInterval, beforeAt time.Time, before metricSnapshot, afterAt time.Time, after metricSnapshot) []loadWindowInterval {
+	if beforeAt.IsZero() || afterAt.IsZero() || !afterAt.After(beforeAt) || !metricSnapshotUsable(before) || !metricSnapshotUsable(after) {
+		return out
+	}
+	deltas := metricDeltas(before.Metrics, after.Metrics)
+	for _, method := range abciMethodsWithActivity(deltas) {
+		out = append(out, loadWindowInterval{
+			Name:       after.Name,
+			Class:      "abci",
+			Method:     method,
+			Source:     "cometbft_abci_connection_method_timing_seconds",
+			Provenance: "bounded_sample",
+			Started:    beforeAt,
+			Ended:      afterAt,
+			Seconds:    afterAt.Sub(beforeAt).Seconds(),
+			Note:       "Prometheus counter changed during this scrape interval; interval is an upper bound, not an event-level ABCI span",
+		})
+	}
 	return out
+}
+
+func seedMetricSamplePoints(at time.Time, snapshots []metricSnapshot) map[string]metricSamplePoint {
+	if at.IsZero() || len(snapshots) == 0 {
+		return nil
+	}
+	out := map[string]metricSamplePoint{}
+	for _, snapshot := range snapshots {
+		if !metricSnapshotUsable(snapshot) {
+			continue
+		}
+		out[snapshot.Name] = metricSamplePoint{
+			at:       at,
+			snapshot: cloneMetricSnapshot(snapshot),
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func metricSnapshotUsable(snapshot metricSnapshot) bool {
+	return snapshot.Name != "" && snapshot.Error == "" && len(snapshot.Metrics) > 0
+}
+
+func cloneMetricSnapshot(snapshot metricSnapshot) metricSnapshot {
+	cloned := metricSnapshot{
+		Name:  snapshot.Name,
+		URL:   snapshot.URL,
+		Error: snapshot.Error,
+	}
+	if len(snapshot.Metrics) > 0 {
+		cloned.Metrics = make(map[string]float64, len(snapshot.Metrics))
+		for key, value := range snapshot.Metrics {
+			cloned.Metrics[key] = value
+		}
+	}
+	return cloned
 }
 
 func abciMethodsWithActivity(deltas map[string]float64) []string {
@@ -2551,8 +2616,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 			TreeDBStatsBefore:   cloneTreeDBStatsSnapshots(treeDBBaseline),
 			TreeDBStatsTimeline: treeDBCollector.snapshot(),
 		}
-		previousMetricsAt := started
-		previousMetrics := cloneMetricSnapshots(baseline)
+		var previousMetricSamples map[string]metricSamplePoint
 		var wallClockIntervals []loadWindowInterval
 		attachTreeDBStats := func(obs loadWindowObservation, label string) loadWindowObservation {
 			if !collectTreeDBStats {
@@ -2570,9 +2634,11 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 			signals := summarizeStorageSignals(baseline, metrics, nil, nil)
 			included, successful, candidates, ok := appMetricLoadCounts(signals)
 			ended := time.Now()
-			wallClockIntervals = appendMetricDeltaWallClockIntervals(wallClockIntervals, previousMetricsAt, previousMetrics, ended, metrics)
-			previousMetricsAt = ended
-			previousMetrics = cloneMetricSnapshots(metrics)
+			if previousMetricSamples == nil {
+				previousMetricSamples = seedMetricSamplePoints(ended, metrics)
+			} else {
+				wallClockIntervals, previousMetricSamples = appendMetricDeltaWallClockIntervalsFromSamples(wallClockIntervals, previousMetricSamples, ended, metrics)
+			}
 			obs := loadWindowObservation{
 				TargetTransactions:     targetTransactions,
 				MinimumSeconds:         minDuration.Seconds(),

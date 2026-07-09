@@ -561,6 +561,72 @@ func TestAppendMetricDeltaWallClockIntervalsFromABCICounters(t *testing.T) {
 	}
 }
 
+func TestMetricSamplePointsSeedFirstScrapeWithoutInterval(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	first := []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 10,
+		},
+	}}
+
+	var intervals []loadWindowInterval
+	previous := seedMetricSamplePoints(base, first)
+	if len(previous) != 1 {
+		t.Fatalf("seeded samples len=%d want 1", len(previous))
+	}
+	intervals, previous = appendMetricDeltaWallClockIntervalsFromSamples(intervals, previous, base.Add(500*time.Millisecond), []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 10,
+		},
+	}})
+	if len(intervals) != 0 {
+		t.Fatalf("unchanged first-followup scrape emitted intervals: %+v", intervals)
+	}
+	if previous["validator-0"].at != base.Add(500*time.Millisecond) {
+		t.Fatalf("previous sample time = %s, want followup scrape time", previous["validator-0"].at)
+	}
+}
+
+func TestMetricSamplePointsPreserveLastGoodAcrossScrapeFailure(t *testing.T) {
+	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	previous := seedMetricSamplePoints(base, []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="commit"}`: 0,
+		},
+	}})
+
+	var intervals []loadWindowInterval
+	intervals, previous = appendMetricDeltaWallClockIntervalsFromSamples(intervals, previous, base.Add(500*time.Millisecond), []metricSnapshot{{
+		Name:  "validator-0",
+		Error: "connection refused",
+	}})
+	if len(intervals) != 0 {
+		t.Fatalf("failed scrape emitted intervals: %+v", intervals)
+	}
+	if previous["validator-0"].at != base {
+		t.Fatalf("failed scrape advanced previous sample to %s, want %s", previous["validator-0"].at, base)
+	}
+
+	intervals, previous = appendMetricDeltaWallClockIntervalsFromSamples(intervals, previous, base.Add(time.Second), []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			`cometbft_abci_connection_method_timing_seconds_count{method="commit"}`: 1,
+		},
+	}})
+	if len(intervals) != 1 {
+		t.Fatalf("intervals len=%d want 1: %+v", len(intervals), intervals)
+	}
+	if intervals[0].Started != base || intervals[0].Ended != base.Add(time.Second) || intervals[0].Seconds != 1 {
+		t.Fatalf("interval timing = %+v, want last-good to success window", intervals[0])
+	}
+	if previous["validator-0"].at != base.Add(time.Second) {
+		t.Fatalf("successful scrape did not advance previous sample: %s", previous["validator-0"].at)
+	}
+}
+
 func TestBoundedSampleABCIIntervalsFeedAccounting(t *testing.T) {
 	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	before := []metricSnapshot{{
