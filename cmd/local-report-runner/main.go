@@ -2399,6 +2399,15 @@ func metricSnapshotUsable(snapshot metricSnapshot) bool {
 	return snapshot.Name != "" && snapshot.Error == "" && len(snapshot.Metrics) > 0
 }
 
+func hasUsableMetricSnapshots(snapshots []metricSnapshot) bool {
+	for _, snapshot := range snapshots {
+		if metricSnapshotUsable(snapshot) {
+			return true
+		}
+	}
+	return false
+}
+
 func cloneMetricSnapshot(snapshot metricSnapshot) metricSnapshot {
 	cloned := metricSnapshot{
 		Name:  snapshot.Name,
@@ -2577,6 +2586,9 @@ func (collector *treeDBStatsTimelineCollector) stop() {
 }
 
 func startLoadWindowMonitor(ctx context.Context, providerName string, baseline []metricSnapshot, treeDBBaseline []treeDBStatsSnapshot, collectTreeDBStats bool, targetTransactions int, minDuration, interval, treeDBStatsSampleInterval time.Duration) *loadWindowMonitor {
+	if freshBaseline := scrapeMetrics(ctx, providerName); hasUsableMetricSnapshots(freshBaseline) {
+		baseline = freshBaseline
+	}
 	started := time.Now()
 	if targetTransactions <= 0 {
 		done := make(chan loadWindowObservation, 1)
@@ -2616,7 +2628,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 			TreeDBStatsBefore:   cloneTreeDBStatsSnapshots(treeDBBaseline),
 			TreeDBStatsTimeline: treeDBCollector.snapshot(),
 		}
-		var previousMetricSamples map[string]metricSamplePoint
+		previousMetricSamples := seedMetricSamplePoints(started, baseline)
 		var wallClockIntervals []loadWindowInterval
 		attachTreeDBStats := func(obs loadWindowObservation, label string) loadWindowObservation {
 			if !collectTreeDBStats {
@@ -2634,11 +2646,7 @@ func startLoadWindowMonitor(ctx context.Context, providerName string, baseline [
 			signals := summarizeStorageSignals(baseline, metrics, nil, nil)
 			included, successful, candidates, ok := appMetricLoadCounts(signals)
 			ended := time.Now()
-			if previousMetricSamples == nil {
-				previousMetricSamples = seedMetricSamplePoints(ended, metrics)
-			} else {
-				wallClockIntervals, previousMetricSamples = appendMetricDeltaWallClockIntervalsFromSamples(wallClockIntervals, previousMetricSamples, ended, metrics)
-			}
+			wallClockIntervals, previousMetricSamples = appendMetricDeltaWallClockIntervalsFromSamples(wallClockIntervals, previousMetricSamples, ended, metrics)
 			obs := loadWindowObservation{
 				TargetTransactions:     targetTransactions,
 				MinimumSeconds:         minDuration.Seconds(),
