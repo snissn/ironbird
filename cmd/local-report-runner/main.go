@@ -6305,9 +6305,6 @@ func writeCatalystLogTimingMarkdown(b *strings.Builder, timing *catalystLogTimin
 	}
 	b.WriteString("### Catalyst Log Timing Summary\n\n")
 	b.WriteString("This summary is parsed from retained Catalyst task logs. It reports per-block send and block-processing spans; per-transaction RPC wait and inclusion latency still require explicit Catalyst instrumentation.\n\n")
-	if timing.LogTruncated {
-		b.WriteString("- Task logs were truncated before parsing; counts and totals cover retained log lines only.\n\n")
-	}
 	if len(timing.Notes) > 0 {
 		for _, note := range timing.Notes {
 			b.WriteString("- ")

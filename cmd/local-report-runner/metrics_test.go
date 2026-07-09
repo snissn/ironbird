@@ -389,6 +389,23 @@ func TestSummarizePipelineSignalsPromotesCatalystBlockTiming(t *testing.T) {
 	}
 }
 
+func TestWriteCatalystLogTimingMarkdownDoesNotDuplicateTruncationNote(t *testing.T) {
+	const truncationNote = "task logs were truncated before parsing; counts and totals cover retained log lines only"
+
+	timing := &catalystLogTiming{
+		LogTruncated:     true,
+		TimestampedLines: 1,
+		Notes:            []string{truncationNote},
+	}
+
+	var b strings.Builder
+	writeCatalystLogTimingMarkdown(&b, timing)
+
+	if got := strings.Count(b.String(), truncationNote); got != 1 {
+		t.Fatalf("truncation note count=%d want 1:\n%s", got, b.String())
+	}
+}
+
 func TestSummarizeConsensusStepTimings(t *testing.T) {
 	deltas := map[string]float64{
 		`cometbft_consensus_step_duration_seconds_sum{chain_id="chain",step="Propose"}`:   1.5,
