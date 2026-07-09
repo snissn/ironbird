@@ -2399,13 +2399,30 @@ func metricSnapshotUsable(snapshot metricSnapshot) bool {
 	return snapshot.Name != "" && snapshot.Error == "" && len(snapshot.Metrics) > 0
 }
 
-func hasUsableMetricSnapshots(snapshots []metricSnapshot) bool {
-	for _, snapshot := range snapshots {
-		if metricSnapshotUsable(snapshot) {
-			return true
+func mergeUsableMetricBaselineSnapshots(baseline, fresh []metricSnapshot) []metricSnapshot {
+	out := cloneMetricSnapshots(baseline)
+	if len(fresh) == 0 {
+		return out
+	}
+	indexByName := map[string]int{}
+	for i, snapshot := range out {
+		if snapshot.Name != "" {
+			indexByName[snapshot.Name] = i
 		}
 	}
-	return false
+	for _, snapshot := range fresh {
+		if !metricSnapshotUsable(snapshot) {
+			continue
+		}
+		cloned := cloneMetricSnapshot(snapshot)
+		if idx, ok := indexByName[snapshot.Name]; ok {
+			out[idx] = cloned
+			continue
+		}
+		indexByName[snapshot.Name] = len(out)
+		out = append(out, cloned)
+	}
+	return out
 }
 
 func cloneMetricSnapshot(snapshot metricSnapshot) metricSnapshot {
@@ -2586,9 +2603,7 @@ func (collector *treeDBStatsTimelineCollector) stop() {
 }
 
 func startLoadWindowMonitor(ctx context.Context, providerName string, baseline []metricSnapshot, treeDBBaseline []treeDBStatsSnapshot, collectTreeDBStats bool, targetTransactions int, minDuration, interval, treeDBStatsSampleInterval time.Duration) *loadWindowMonitor {
-	if freshBaseline := scrapeMetrics(ctx, providerName); hasUsableMetricSnapshots(freshBaseline) {
-		baseline = freshBaseline
-	}
+	baseline = mergeUsableMetricBaselineSnapshots(baseline, scrapeMetrics(ctx, providerName))
 	started := time.Now()
 	if targetTransactions <= 0 {
 		done := make(chan loadWindowObservation, 1)

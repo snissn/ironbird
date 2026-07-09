@@ -627,6 +627,57 @@ func TestMetricSamplePointsPreserveLastGoodAcrossScrapeFailure(t *testing.T) {
 	}
 }
 
+func TestMergeUsableMetricBaselineSnapshotsPreservesPriorOnPartialScrape(t *testing.T) {
+	baseline := []metricSnapshot{
+		{
+			Name: "validator-0",
+			URL:  "http://old-0/metrics",
+			Metrics: map[string]float64{
+				`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 10,
+			},
+		},
+		{
+			Name: "validator-1",
+			URL:  "http://old-1/metrics",
+			Metrics: map[string]float64{
+				`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 20,
+			},
+		},
+	}
+	fresh := []metricSnapshot{
+		{
+			Name: "validator-0",
+			URL:  "http://new-0/metrics",
+			Metrics: map[string]float64{
+				`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`: 12,
+			},
+		},
+		{
+			Name:  "validator-1",
+			URL:   "http://new-1/metrics",
+			Error: "connection refused",
+		},
+	}
+
+	merged := mergeUsableMetricBaselineSnapshots(baseline, fresh)
+	if len(merged) != 2 {
+		t.Fatalf("merged len=%d want 2: %+v", len(merged), merged)
+	}
+	byName := metricSnapshotsByName(merged)
+	if got := byName["validator-0"].Metrics[`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`]; got != 12 {
+		t.Fatalf("validator-0 baseline = %v, want fresh value 12", got)
+	}
+	if byName["validator-0"].URL != "http://new-0/metrics" {
+		t.Fatalf("validator-0 URL = %q, want fresh URL", byName["validator-0"].URL)
+	}
+	if got := byName["validator-1"].Metrics[`cometbft_abci_connection_method_timing_seconds_count{method="check_tx"}`]; got != 20 {
+		t.Fatalf("validator-1 baseline = %v, want preserved prior value 20", got)
+	}
+	if byName["validator-1"].Error != "" {
+		t.Fatalf("validator-1 preserved baseline has error %q", byName["validator-1"].Error)
+	}
+}
+
 func TestBoundedSampleABCIIntervalsFeedAccounting(t *testing.T) {
 	base := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	before := []metricSnapshot{{
