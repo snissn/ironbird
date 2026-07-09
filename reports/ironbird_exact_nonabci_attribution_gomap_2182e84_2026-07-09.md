@@ -78,7 +78,7 @@ Summary ledger:
 Command:
 
 ```sh
-RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)
+RUN_ID=20260709T020911Z
 OUT_ROOT=/mnt/fast4tb/ironbird-exact-nonabci-attribution-${RUN_ID}
 RUNNER=/mnt/fast4tb/tmp/local-report-runner-exact-nonabci-${RUN_ID}
 
@@ -103,12 +103,12 @@ goleveldb. TreeDB rows also captured a 5-minute post-load dwell snapshot.
 
 Accepted rows:
 
-| Workload | Backend | Attempt | Blocks | Tx/block | Window s | Successful tx | Window TPS | Wall TPS |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Plain send | TreeDB | 1 | 400 | 500 | 335.03 | 199,194 | 594.56 | 253.18 |
-| Plain send | goleveldb | 1 | 400 | 500 | 300.02 | 199,000 | 663.28 | 443.69 |
-| Small multisend | goleveldb | 2 | 480 | 500 | 353.52 | 238,992 | 676.03 | 468.47 |
-| Small multisend | TreeDB | 2 | 480 | 500 | 402.52 | 238,998 | 593.75 | 278.19 |
+| Workload | Backend | Attempt | Blocks | Tx/block | Window s | Successful tx | Runtime TPS | Window TPS | Wall TPS |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Plain send | TreeDB | 1 | 400 | 500 | 335.03 | 199,194 | 594.56 | 594.56 | 253.18 |
+| Plain send | goleveldb | 1 | 400 | 500 | 300.02 | 199,000 | 663.28 | 663.28 | 443.69 |
+| Small multisend | goleveldb | 2 | 480 | 500 | 353.52 | 238,992 | 676.03 | 676.03 | 468.47 |
+| Small multisend | TreeDB | 2 | 480 | 500 | 402.52 | 238,998 | 593.75 | 593.75 | 278.19 |
 
 Rejected-but-preserved rows:
 
