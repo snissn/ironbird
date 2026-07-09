@@ -406,6 +406,39 @@ func TestWriteCatalystLogTimingMarkdownDoesNotDuplicateTruncationNote(t *testing
 	}
 }
 
+func TestRenderReportMarkdownIncludesCatalystTimingWithoutLoadWindow(t *testing.T) {
+	artifact := reportArtifact{
+		Results: []runResult{{
+			Scenario: scenario{Name: "evm-send"},
+			LoadTestLogSummary: loadTestLogSummary{
+				CatalystTiming: &catalystLogTiming{
+					TimestampedLines:     3,
+					SendTxsSentTotal:     100,
+					SendMatchedTxsTotal:  100,
+					SendTxsPerSecond:     200,
+					SendDurations:        &durationStats{Count: 1, TotalSeconds: 0.5, AvgSeconds: 0.5, MaxSeconds: 0.5},
+					BlockProcessedEvents: 1,
+				},
+			},
+		}},
+	}
+
+	md := renderReportMarkdown(artifact)
+	for _, want := range []string{
+		"## evm-send Catalyst Log Timing",
+		"### Catalyst Log Timing Summary",
+		"| Log span s | Timestamped lines | Send blocks | Txs sent | Matched send txs |",
+		"| 0 | 3 | 1 | 100 | 100 | 0.5 | 0.5 |",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "## evm-send Accepted Window") {
+		t.Fatalf("markdown should not require an accepted-window section for Catalyst timing:\n%s", md)
+	}
+}
+
 func TestSummarizeConsensusStepTimings(t *testing.T) {
 	deltas := map[string]float64{
 		`cometbft_consensus_step_duration_seconds_sum{chain_id="chain",step="Propose"}`:   1.5,

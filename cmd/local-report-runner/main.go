@@ -5862,6 +5862,7 @@ func renderReportMarkdown(artifact reportArtifact) string {
 	for _, result := range artifact.Results {
 		writeRuntimeBreakdownMarkdown(&b, result)
 		writeAcceptedWindowMarkdown(&b, result)
+		writeScenarioCatalystLogTimingMarkdown(&b, result)
 		writeTreeDBDwellMarkdown(&b, result)
 		writeProfileArtifactsMarkdown(&b, result)
 	}
@@ -5930,7 +5931,6 @@ func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
 	writeLoadWindowPhaseOverlapsMarkdown(b, obs.PhaseOverlaps)
 	writeLoadWindowAccountingMarkdown(b, obs.Accounting)
 	writePipelineSignalsMarkdown(b, obs.PipelineSignals)
-	writeCatalystLogTimingMarkdown(b, result.LoadTestLogSummary.CatalystTiming)
 	writeCadenceDiagnosticsMarkdown(b, obs.CadenceDiagnostics)
 	writeTreeDBStatsTimelineMarkdown(b, obs.TreeDBStatsTimeline)
 
@@ -6297,6 +6297,16 @@ func writePipelineSignalsMarkdown(b *strings.Builder, rows []pipelineSignal) {
 		b.WriteString(" |\n")
 	}
 	b.WriteByte('\n')
+}
+
+func writeScenarioCatalystLogTimingMarkdown(b *strings.Builder, result runResult) {
+	if result.LoadTestLogSummary.CatalystTiming == nil {
+		return
+	}
+	b.WriteString("## ")
+	b.WriteString(mdCell(result.Scenario.Name))
+	b.WriteString(" Catalyst Log Timing\n\n")
+	writeCatalystLogTimingMarkdown(b, result.LoadTestLogSummary.CatalystTiming)
 }
 
 func writeCatalystLogTimingMarkdown(b *strings.Builder, timing *catalystLogTiming) {
