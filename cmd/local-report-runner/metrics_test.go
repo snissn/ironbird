@@ -399,6 +399,13 @@ func TestLoadWindowIntervalUnionClipsAndMerges(t *testing.T) {
 			Started:    base.Add(10 * time.Second),
 			Ended:      base.Add(30 * time.Second),
 		},
+		{
+			Class:      "abci",
+			Method:     "query",
+			Provenance: "exact_event",
+			Started:    base.Add(10 * time.Second),
+			Ended:      base.Add(30 * time.Second),
+		},
 	}
 
 	unionSeconds, count, provenance := loadWindowIntervalClassUnion(intervals, "validator-0", "abci", windowStart, windowEnd)
@@ -415,6 +422,11 @@ func TestLoadWindowIntervalUnionClipsAndMerges(t *testing.T) {
 	attribution := summarizeLoadWindowIntervalAttributions(intervals, "validator-0", windowStart, windowEnd)
 	if len(attribution) != 4 {
 		t.Fatalf("attribution rows = %d, want 4: %+v", len(attribution), attribution)
+	}
+
+	aggregateUnionSeconds, aggregateCount, _ := loadWindowIntervalClassUnion(intervals, "", "abci", windowStart, windowEnd)
+	if aggregateUnionSeconds != 20 || aggregateCount != 5 {
+		t.Fatalf("aggregate union/count = %v/%d, want 20/5", aggregateUnionSeconds, aggregateCount)
 	}
 }
 

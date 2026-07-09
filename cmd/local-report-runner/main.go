@@ -2257,7 +2257,10 @@ func loadWindowIntervalClassUnion(intervals []loadWindowInterval, nodeName, clas
 }
 
 func loadWindowIntervalMatchesNode(interval loadWindowInterval, nodeName string) bool {
-	return nodeName == "" || interval.Name == "" || interval.Name == nodeName
+	if nodeName == "" {
+		return true
+	}
+	return interval.Name == nodeName
 }
 
 func clipLoadWindowInterval(interval loadWindowInterval, windowStart, windowEnd time.Time) (clippedClockInterval, bool) {
