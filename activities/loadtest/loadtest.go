@@ -29,7 +29,7 @@ type Activity struct {
 	StopCondition     StopCondition
 }
 
-const maxLoadTestTaskLogBytes = 256 * 1024
+const maxLoadTestTaskLogBytes = 2 * 1024 * 1024
 
 type StopCondition func(context.Context) (bool, string)
 

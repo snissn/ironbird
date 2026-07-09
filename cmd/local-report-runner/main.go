@@ -384,36 +384,45 @@ type loadWindowAccounting struct {
 }
 
 type pipelineSignal struct {
-	Name                          string   `json:"name"`
-	WindowSeconds                 float64  `json:"window_seconds,omitempty"`
-	SubmittedTransactions         int      `json:"submitted_transactions,omitempty"`
-	IncludedTransactions          int      `json:"included_transactions,omitempty"`
-	SuccessfulTransactions        int      `json:"successful_transactions,omitempty"`
-	FailedSendTotal               int      `json:"failed_send_total,omitempty"`
-	SubmittedMinusIncluded        int      `json:"submitted_minus_included,omitempty"`
-	CollectorStartingBlock        uint64   `json:"collector_starting_block,omitempty"`
-	CollectorEndingBlock          uint64   `json:"collector_ending_block,omitempty"`
-	CollectorBlockSpan            uint64   `json:"collector_block_span,omitempty"`
-	ConsensusTotalTxsDelta        float64  `json:"consensus_total_txs_delta,omitempty"`
-	MempoolSuccessfulTxsDelta     float64  `json:"mempool_successful_txs_delta,omitempty"`
-	SDKTxCountDelta               float64  `json:"sdk_tx_count_delta,omitempty"`
-	SDKTxSuccessfulDelta          float64  `json:"sdk_tx_successful_delta,omitempty"`
-	ABCICheckTxSeconds            float64  `json:"abci_check_tx_seconds,omitempty"`
-	ABCICheckTxCount              int      `json:"abci_check_tx_count,omitempty"`
-	AvgCheckTxSeconds             float64  `json:"avg_check_tx_seconds,omitempty"`
-	ABCIFinalizeBlockSeconds      float64  `json:"abci_finalize_block_seconds,omitempty"`
-	ABCIFinalizeBlockCount        int      `json:"abci_finalize_block_count,omitempty"`
-	AvgFinalizeBlockSeconds       float64  `json:"avg_finalize_block_seconds,omitempty"`
-	ABCICommitSeconds             float64  `json:"abci_commit_seconds,omitempty"`
-	ABCICommitCount               int      `json:"abci_commit_count,omitempty"`
-	AvgCommitSeconds              float64  `json:"avg_commit_seconds,omitempty"`
-	ConsensusBlockIntervalSeconds float64  `json:"consensus_block_interval_seconds,omitempty"`
-	ConsensusBlockIntervalCount   int      `json:"consensus_block_interval_count,omitempty"`
-	AvgBlockIntervalSeconds       float64  `json:"avg_block_interval_seconds,omitempty"`
-	AvgTxsPerCommit               float64  `json:"avg_txs_per_commit,omitempty"`
-	AvgTxsPerFinalizeBlock        float64  `json:"avg_txs_per_finalize_block,omitempty"`
-	AvgTxsPerConsensusBlock       float64  `json:"avg_txs_per_consensus_block,omitempty"`
-	Notes                         []string `json:"notes,omitempty"`
+	Name                           string   `json:"name"`
+	WindowSeconds                  float64  `json:"window_seconds,omitempty"`
+	SubmittedTransactions          int      `json:"submitted_transactions,omitempty"`
+	IncludedTransactions           int      `json:"included_transactions,omitempty"`
+	SuccessfulTransactions         int      `json:"successful_transactions,omitempty"`
+	FailedSendTotal                int      `json:"failed_send_total,omitempty"`
+	SubmittedMinusIncluded         int      `json:"submitted_minus_included,omitempty"`
+	CatalystSendBlocks             int      `json:"catalyst_send_blocks,omitempty"`
+	CatalystSendTxs                int      `json:"catalyst_send_txs,omitempty"`
+	CatalystSendSeconds            float64  `json:"catalyst_send_seconds,omitempty"`
+	AvgCatalystSendSeconds         float64  `json:"avg_catalyst_send_seconds,omitempty"`
+	MaxCatalystSendSeconds         float64  `json:"max_catalyst_send_seconds,omitempty"`
+	CatalystSendTxsPerSecond       float64  `json:"catalyst_send_txs_per_second,omitempty"`
+	CatalystBlockProcessBlocks     int      `json:"catalyst_block_process_blocks,omitempty"`
+	AvgCatalystBlockProcessSeconds float64  `json:"avg_catalyst_block_process_seconds,omitempty"`
+	MaxCatalystBlockProcessSeconds float64  `json:"max_catalyst_block_process_seconds,omitempty"`
+	CollectorStartingBlock         uint64   `json:"collector_starting_block,omitempty"`
+	CollectorEndingBlock           uint64   `json:"collector_ending_block,omitempty"`
+	CollectorBlockSpan             uint64   `json:"collector_block_span,omitempty"`
+	ConsensusTotalTxsDelta         float64  `json:"consensus_total_txs_delta,omitempty"`
+	MempoolSuccessfulTxsDelta      float64  `json:"mempool_successful_txs_delta,omitempty"`
+	SDKTxCountDelta                float64  `json:"sdk_tx_count_delta,omitempty"`
+	SDKTxSuccessfulDelta           float64  `json:"sdk_tx_successful_delta,omitempty"`
+	ABCICheckTxSeconds             float64  `json:"abci_check_tx_seconds,omitempty"`
+	ABCICheckTxCount               int      `json:"abci_check_tx_count,omitempty"`
+	AvgCheckTxSeconds              float64  `json:"avg_check_tx_seconds,omitempty"`
+	ABCIFinalizeBlockSeconds       float64  `json:"abci_finalize_block_seconds,omitempty"`
+	ABCIFinalizeBlockCount         int      `json:"abci_finalize_block_count,omitempty"`
+	AvgFinalizeBlockSeconds        float64  `json:"avg_finalize_block_seconds,omitempty"`
+	ABCICommitSeconds              float64  `json:"abci_commit_seconds,omitempty"`
+	ABCICommitCount                int      `json:"abci_commit_count,omitempty"`
+	AvgCommitSeconds               float64  `json:"avg_commit_seconds,omitempty"`
+	ConsensusBlockIntervalSeconds  float64  `json:"consensus_block_interval_seconds,omitempty"`
+	ConsensusBlockIntervalCount    int      `json:"consensus_block_interval_count,omitempty"`
+	AvgBlockIntervalSeconds        float64  `json:"avg_block_interval_seconds,omitempty"`
+	AvgTxsPerCommit                float64  `json:"avg_txs_per_commit,omitempty"`
+	AvgTxsPerFinalizeBlock         float64  `json:"avg_txs_per_finalize_block,omitempty"`
+	AvgTxsPerConsensusBlock        float64  `json:"avg_txs_per_consensus_block,omitempty"`
+	Notes                          []string `json:"notes,omitempty"`
 }
 
 type cadenceDiagnostic struct {
@@ -481,21 +490,53 @@ type runtimeBreakdown struct {
 }
 
 type loadTestLogSummary struct {
-	SendingEvents            int               `json:"sending_events,omitempty"`
-	SendingTxsTotal          int               `json:"sending_txs_total,omitempty"`
-	BuiltBatchEvents         int               `json:"built_batch_events,omitempty"`
-	FailedSendTotal          int               `json:"failed_send_total,omitempty"`
-	FailedSendErrors         []logErrorCount   `json:"failed_send_errors,omitempty"`
-	GoRoutinesCompletedTotal int               `json:"go_routines_completed_total,omitempty"`
-	CollectorTxs             int               `json:"collector_txs,omitempty"`
-	CollectorStartingBlock   uint64            `json:"collector_starting_block,omitempty"`
-	CollectorEndingBlock     uint64            `json:"collector_ending_block,omitempty"`
-	RunnerOverall            *runnerLogOverall `json:"runner_overall,omitempty"`
+	SendingEvents            int                `json:"sending_events,omitempty"`
+	SendingTxsTotal          int                `json:"sending_txs_total,omitempty"`
+	BuiltBatchEvents         int                `json:"built_batch_events,omitempty"`
+	FailedSendTotal          int                `json:"failed_send_total,omitempty"`
+	FailedSendErrors         []logErrorCount    `json:"failed_send_errors,omitempty"`
+	GoRoutinesCompletedTotal int                `json:"go_routines_completed_total,omitempty"`
+	CollectorTxs             int                `json:"collector_txs,omitempty"`
+	CollectorStartingBlock   uint64             `json:"collector_starting_block,omitempty"`
+	CollectorEndingBlock     uint64             `json:"collector_ending_block,omitempty"`
+	RunnerOverall            *runnerLogOverall  `json:"runner_overall,omitempty"`
+	CatalystTiming           *catalystLogTiming `json:"catalyst_timing,omitempty"`
 }
 
 type logErrorCount struct {
 	Error string `json:"error"`
 	Count int    `json:"count"`
+}
+
+type catalystLogTiming struct {
+	LogTruncated                        bool           `json:"log_truncated,omitempty"`
+	ParsedLines                         int            `json:"parsed_lines,omitempty"`
+	TimestampedLines                    int            `json:"timestamped_lines,omitempty"`
+	FirstTimestamp                      *time.Time     `json:"first_timestamp,omitempty"`
+	LastTimestamp                       *time.Time     `json:"last_timestamp,omitempty"`
+	LogSpanSeconds                      float64        `json:"log_span_seconds,omitempty"`
+	SendStartEvents                     int            `json:"send_start_events,omitempty"`
+	SendCompleteEvents                  int            `json:"send_complete_events,omitempty"`
+	SendExpectedTxsTotal                int            `json:"send_expected_txs_total,omitempty"`
+	SendTxsSentTotal                    int            `json:"send_txs_sent_total,omitempty"`
+	SendDurations                       *durationStats `json:"send_durations,omitempty"`
+	SendTxsPerSecond                    float64        `json:"send_txs_per_second,omitempty"`
+	BlockEventEvents                    int            `json:"block_event_events,omitempty"`
+	BlockProcessingEvents               int            `json:"block_processing_events,omitempty"`
+	BlockProcessedEvents                int            `json:"block_processed_events,omitempty"`
+	BlockEventToProcessingDurations     *durationStats `json:"block_event_to_processing_durations,omitempty"`
+	BlockProcessingToProcessedDurations *durationStats `json:"block_processing_to_processed_durations,omitempty"`
+	ChainTimestampToProcessingDurations *durationStats `json:"chain_timestamp_to_processing_durations,omitempty"`
+	Notes                               []string       `json:"notes,omitempty"`
+}
+
+type durationStats struct {
+	Count        int     `json:"count,omitempty"`
+	TotalSeconds float64 `json:"total_seconds,omitempty"`
+	AvgSeconds   float64 `json:"avg_seconds,omitempty"`
+	P50Seconds   float64 `json:"p50_seconds,omitempty"`
+	P95Seconds   float64 `json:"p95_seconds,omitempty"`
+	MaxSeconds   float64 `json:"max_seconds,omitempty"`
 }
 
 type runnerLogOverall struct {
@@ -4538,7 +4579,9 @@ func summarizeLoadTestLogs(logs string) loadTestLogSummary {
 	}
 	var summary loadTestLogSummary
 	errorCounts := map[string]int{}
+	timing := newCatalystLogTiming(logs)
 	for _, line := range strings.Split(logs, "\n") {
+		timing.observe(line)
 		if strings.Contains(line, "Sending txs") {
 			summary.SendingEvents++
 			summary.SendingTxsTotal += intField(line, "num_txs")
@@ -4573,7 +4616,210 @@ func summarizeLoadTestLogs(logs string) loadTestLogSummary {
 	if len(errorCounts) > 0 {
 		summary.FailedSendErrors = topLogErrors(errorCounts, 8)
 	}
+	if built := timing.build(); built != nil {
+		summary.CatalystTiming = built
+	}
 	return summary
+}
+
+type catalystLogTimingBuilder struct {
+	timing                  catalystLogTiming
+	sendStarts              map[int]time.Time
+	sendExpected            map[int]int
+	blockEvents             map[int]time.Time
+	blockProcessing         map[int]time.Time
+	sendDurations           []float64
+	eventToProcessing       []float64
+	processingToProcessed   []float64
+	chainTimestampToProcess []float64
+}
+
+func newCatalystLogTiming(logs string) *catalystLogTimingBuilder {
+	return &catalystLogTimingBuilder{
+		timing: catalystLogTiming{
+			LogTruncated: strings.HasPrefix(logs, "[truncated task logs; showing tail]"),
+		},
+		sendStarts:      map[int]time.Time{},
+		sendExpected:    map[int]int{},
+		blockEvents:     map[int]time.Time{},
+		blockProcessing: map[int]time.Time{},
+	}
+}
+
+func (b *catalystLogTimingBuilder) observe(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	b.timing.ParsedLines++
+	at, ok := catalystLogTimestamp(line)
+	if !ok {
+		return
+	}
+	b.timing.TimestampedLines++
+	if b.timing.FirstTimestamp == nil || at.Before(*b.timing.FirstTimestamp) {
+		first := at
+		b.timing.FirstTimestamp = &first
+	}
+	if b.timing.LastTimestamp == nil || at.After(*b.timing.LastTimestamp) {
+		last := at
+		b.timing.LastTimestamp = &last
+	}
+
+	switch {
+	case strings.Contains(line, "starting to send transactions for block"):
+		block := intField(line, "block_number")
+		if block == 0 {
+			return
+		}
+		expected := intField(line, "expected_txs")
+		b.timing.SendStartEvents++
+		b.timing.SendExpectedTxsTotal += expected
+		b.sendStarts[block] = at
+		b.sendExpected[block] = expected
+	case strings.Contains(line, "completed sending transactions for block"):
+		block := intField(line, "block_number")
+		if block == 0 {
+			return
+		}
+		b.timing.SendCompleteEvents++
+		b.timing.SendTxsSentTotal += intField(line, "txs_sent")
+		if started, ok := b.sendStarts[block]; ok && !at.Before(started) {
+			b.sendDurations = append(b.sendDurations, at.Sub(started).Seconds())
+			delete(b.sendStarts, block)
+			delete(b.sendExpected, block)
+		}
+	case strings.Contains(line, "received new block event"):
+		height := intField(line, "height")
+		if height == 0 {
+			return
+		}
+		b.timing.BlockEventEvents++
+		b.blockEvents[height] = at
+	case strings.Contains(line, "processing block"):
+		height := intField(line, "height")
+		if height == 0 {
+			return
+		}
+		b.timing.BlockProcessingEvents++
+		b.blockProcessing[height] = at
+		if eventAt, ok := b.blockEvents[height]; ok && !at.Before(eventAt) {
+			b.eventToProcessing = append(b.eventToProcessing, at.Sub(eventAt).Seconds())
+		}
+		if chainAt, ok := catalystLogStringTimestamp(line, "timestamp"); ok && !at.Before(chainAt) {
+			b.chainTimestampToProcess = append(b.chainTimestampToProcess, at.Sub(chainAt).Seconds())
+		}
+	case strings.Contains(line, "processed block"):
+		height := intField(line, "height")
+		if height == 0 {
+			return
+		}
+		b.timing.BlockProcessedEvents++
+		if processingAt, ok := b.blockProcessing[height]; ok && !at.Before(processingAt) {
+			b.processingToProcessed = append(b.processingToProcessed, at.Sub(processingAt).Seconds())
+			delete(b.blockProcessing, height)
+		}
+		delete(b.blockEvents, height)
+	}
+}
+
+func (b *catalystLogTimingBuilder) build() *catalystLogTiming {
+	if b == nil {
+		return nil
+	}
+	if b.timing.FirstTimestamp != nil && b.timing.LastTimestamp != nil && !b.timing.LastTimestamp.Before(*b.timing.FirstTimestamp) {
+		b.timing.LogSpanSeconds = b.timing.LastTimestamp.Sub(*b.timing.FirstTimestamp).Seconds()
+	}
+	b.timing.SendDurations = summarizeDurations(b.sendDurations)
+	if b.timing.SendDurations != nil && b.timing.SendDurations.TotalSeconds > 0 {
+		b.timing.SendTxsPerSecond = float64(b.timing.SendTxsSentTotal) / b.timing.SendDurations.TotalSeconds
+	}
+	b.timing.BlockEventToProcessingDurations = summarizeDurations(b.eventToProcessing)
+	b.timing.BlockProcessingToProcessedDurations = summarizeDurations(b.processingToProcessed)
+	b.timing.ChainTimestampToProcessingDurations = summarizeDurations(b.chainTimestampToProcess)
+	if b.timing.LogTruncated {
+		b.timing.Notes = append(b.timing.Notes, "task logs were truncated before parsing; counts and totals cover retained log lines only")
+	}
+	if len(b.sendStarts) > 0 {
+		b.timing.Notes = append(b.timing.Notes, fmt.Sprintf("%d send start events did not have retained completion events", len(b.sendStarts)))
+	}
+	if len(b.blockProcessing) > 0 {
+		b.timing.Notes = append(b.timing.Notes, fmt.Sprintf("%d block processing events did not have retained processed events", len(b.blockProcessing)))
+	}
+	if b.timing.TimestampedLines == 0 ||
+		(b.timing.SendStartEvents == 0 && b.timing.SendCompleteEvents == 0 &&
+			b.timing.BlockEventEvents == 0 && b.timing.BlockProcessingEvents == 0 && b.timing.BlockProcessedEvents == 0) {
+		return nil
+	}
+	return &b.timing
+}
+
+func catalystLogTimestamp(line string) (time.Time, bool) {
+	field, _, ok := strings.Cut(line, "\t")
+	if !ok {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			return time.Time{}, false
+		}
+		field = fields[0]
+	}
+	at, err := time.Parse(time.RFC3339Nano, field)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
+}
+
+func catalystLogStringTimestamp(line, key string) (time.Time, bool) {
+	text := stringField(line, key)
+	if text == "" {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
+}
+
+func summarizeDurations(values []float64) *durationStats {
+	if len(values) == 0 {
+		return nil
+	}
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+	var total float64
+	for _, value := range sorted {
+		total += value
+	}
+	return &durationStats{
+		Count:        len(sorted),
+		TotalSeconds: total,
+		AvgSeconds:   total / float64(len(sorted)),
+		P50Seconds:   percentileSorted(sorted, 0.50),
+		P95Seconds:   percentileSorted(sorted, 0.95),
+		MaxSeconds:   sorted[len(sorted)-1],
+	}
+}
+
+func percentileSorted(sorted []float64, percentile float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if percentile <= 0 {
+		return sorted[0]
+	}
+	if percentile >= 1 {
+		return sorted[len(sorted)-1]
+	}
+	index := int(math.Ceil(percentile*float64(len(sorted)))) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+	return sorted[index]
 }
 
 func populateLoadWindowPipelineSignals(result *runResult) {
@@ -4790,6 +5036,9 @@ func summarizeLoadWindowAccounting(result runResult, obs loadWindowObservation) 
 			LoadgenClientWaitMissingReason: "Catalyst aggregate logs do not export per-client wait or broadcast latency",
 			IntervalAttribution:            intervalAttribution,
 		}
+		if result.LoadTestLogSummary.CatalystTiming != nil {
+			row.LoadgenClientWaitMissingReason = "per-transaction client RPC wait is unavailable; Catalyst per-block send and block-processing durations are reported separately from retained task logs"
+		}
 		if abciIntervalCount > 0 {
 			row.ABCIBusyUnionSeconds = &abciBusyUnionSeconds
 			row.ABCIIntervalCount = abciIntervalCount
@@ -4896,6 +5145,21 @@ func summarizePipelineSignals(obs loadWindowObservation, logs loadTestLogSummary
 		if row.ConsensusBlockIntervalCount > 0 {
 			row.AvgBlockIntervalSeconds = row.ConsensusBlockIntervalSeconds / float64(row.ConsensusBlockIntervalCount)
 			row.AvgTxsPerConsensusBlock = signal.ConsensusTotalTxsDelta / float64(row.ConsensusBlockIntervalCount)
+		}
+		if logs.CatalystTiming != nil {
+			row.CatalystSendTxs = logs.CatalystTiming.SendTxsSentTotal
+			row.CatalystSendTxsPerSecond = logs.CatalystTiming.SendTxsPerSecond
+			if logs.CatalystTiming.SendDurations != nil {
+				row.CatalystSendBlocks = logs.CatalystTiming.SendDurations.Count
+				row.CatalystSendSeconds = logs.CatalystTiming.SendDurations.TotalSeconds
+				row.AvgCatalystSendSeconds = logs.CatalystTiming.SendDurations.AvgSeconds
+				row.MaxCatalystSendSeconds = logs.CatalystTiming.SendDurations.MaxSeconds
+			}
+			if logs.CatalystTiming.BlockProcessingToProcessedDurations != nil {
+				row.CatalystBlockProcessBlocks = logs.CatalystTiming.BlockProcessingToProcessedDurations.Count
+				row.AvgCatalystBlockProcessSeconds = logs.CatalystTiming.BlockProcessingToProcessedDurations.AvgSeconds
+				row.MaxCatalystBlockProcessSeconds = logs.CatalystTiming.BlockProcessingToProcessedDurations.MaxSeconds
+			}
 		}
 		if submitted > obs.IncludedTransactions {
 			row.SubmittedMinusIncluded = submitted - obs.IncludedTransactions
@@ -5657,6 +5921,7 @@ func writeAcceptedWindowMarkdown(b *strings.Builder, result runResult) {
 	writeLoadWindowPhaseOverlapsMarkdown(b, obs.PhaseOverlaps)
 	writeLoadWindowAccountingMarkdown(b, obs.Accounting)
 	writePipelineSignalsMarkdown(b, obs.PipelineSignals)
+	writeCatalystLogTimingMarkdown(b, result.LoadTestLogSummary.CatalystTiming)
 	writeCadenceDiagnosticsMarkdown(b, obs.CadenceDiagnostics)
 	writeTreeDBStatsTimelineMarkdown(b, obs.TreeDBStatsTimeline)
 
@@ -6023,6 +6288,99 @@ func writePipelineSignalsMarkdown(b *strings.Builder, rows []pipelineSignal) {
 		b.WriteString(" |\n")
 	}
 	b.WriteByte('\n')
+}
+
+func writeCatalystLogTimingMarkdown(b *strings.Builder, timing *catalystLogTiming) {
+	if timing == nil {
+		return
+	}
+	b.WriteString("### Catalyst Log Timing Summary\n\n")
+	b.WriteString("This summary is parsed from retained Catalyst task logs. It reports per-block send and block-processing spans; per-transaction RPC wait and inclusion latency still require explicit Catalyst instrumentation.\n\n")
+	if timing.LogTruncated {
+		b.WriteString("- Task logs were truncated before parsing; counts and totals cover retained log lines only.\n\n")
+	}
+	if len(timing.Notes) > 0 {
+		for _, note := range timing.Notes {
+			b.WriteString("- ")
+			b.WriteString(mdCell(note))
+			b.WriteByte('\n')
+		}
+		b.WriteByte('\n')
+	}
+	b.WriteString("| Log span s | Timestamped lines | Send blocks | Txs sent | Send total s | Send avg s | Send p95 s | Send max s | Send tx/s | Process blocks | Process total s | Process avg s | Process p95 s | Process max s | Event->process avg s | Chain ts->process avg s |\n")
+	b.WriteString("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+	send := timing.SendDurations
+	process := timing.BlockProcessingToProcessedDurations
+	eventToProcess := timing.BlockEventToProcessingDurations
+	chainToProcess := timing.ChainTimestampToProcessingDurations
+	b.WriteString("| ")
+	b.WriteString(metricFloat(timing.LogSpanSeconds))
+	b.WriteString(" | ")
+	b.WriteString(strconv.Itoa(timing.TimestampedLines))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationCount(send))
+	b.WriteString(" | ")
+	b.WriteString(strconv.Itoa(timing.SendTxsSentTotal))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationTotal(send))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationAvg(send))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationP95(send))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationMax(send))
+	b.WriteString(" | ")
+	b.WriteString(metricFloat(timing.SendTxsPerSecond))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationCount(process))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationTotal(process))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationAvg(process))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationP95(process))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationMax(process))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationAvg(eventToProcess))
+	b.WriteString(" | ")
+	b.WriteString(optionalDurationAvg(chainToProcess))
+	b.WriteString(" |\n\n")
+}
+
+func optionalDurationCount(stats *durationStats) string {
+	if stats == nil {
+		return ""
+	}
+	return strconv.Itoa(stats.Count)
+}
+
+func optionalDurationTotal(stats *durationStats) string {
+	if stats == nil {
+		return ""
+	}
+	return metricFloat(stats.TotalSeconds)
+}
+
+func optionalDurationAvg(stats *durationStats) string {
+	if stats == nil {
+		return ""
+	}
+	return metricFloat(stats.AvgSeconds)
+}
+
+func optionalDurationP95(stats *durationStats) string {
+	if stats == nil {
+		return ""
+	}
+	return metricFloat(stats.P95Seconds)
+}
+
+func optionalDurationMax(stats *durationStats) string {
+	if stats == nil {
+		return ""
+	}
+	return metricFloat(stats.MaxSeconds)
 }
 
 func writeTreeDBDwellMarkdown(b *strings.Builder, result runResult) {

@@ -292,6 +292,98 @@ func TestSummarizePipelineSignalsPromotesAcceptedWindowCounters(t *testing.T) {
 	}
 }
 
+func TestSummarizeLoadTestLogsParsesCatalystBlockTiming(t *testing.T) {
+	logs := strings.Join([]string{
+		"[truncated task logs; showing tail]",
+		`2026-07-08T21:45:28.732Z	DEBUG	received new block event	{"height": 711}`,
+		`2026-07-08T21:45:28.752Z	DEBUG	processing block	{"height": 711, "timestamp": "2026-07-08T21:45:27.841Z", "gas_limit": 75000000}`,
+		`2026-07-08T21:45:28.752Z	INFO	starting to send transactions for block	{"block_number": 323, "expected_txs": 500}`,
+		`2026-07-08T21:45:28.996Z	INFO	completed sending transactions for block	{"block_number": 323, "txs_sent": 500, "expected_txs": 500}`,
+		`2026-07-08T21:45:29.002Z	INFO	processed block	{"height": 711}`,
+		`2026-07-08T21:45:29.145Z	DEBUG	received new block event	{"height": 712}`,
+		`2026-07-08T21:45:29.145Z	DEBUG	processing block	{"height": 712, "timestamp": "2026-07-08T21:45:28.287Z", "gas_limit": 75000000}`,
+		`2026-07-08T21:45:29.145Z	INFO	starting to send transactions for block	{"block_number": 324, "expected_txs": 500}`,
+		`2026-07-08T21:45:29.662Z	INFO	completed sending transactions for block	{"block_number": 324, "txs_sent": 500, "expected_txs": 500}`,
+		`2026-07-08T21:45:29.662Z	INFO	processed block	{"height": 712}`,
+	}, "\n")
+
+	summary := summarizeLoadTestLogs(logs)
+	timing := summary.CatalystTiming
+	if timing == nil {
+		t.Fatalf("expected Catalyst timing summary")
+	}
+	if !timing.LogTruncated {
+		t.Fatalf("expected truncated log marker")
+	}
+	if timing.SendStartEvents != 2 || timing.SendCompleteEvents != 2 || timing.SendTxsSentTotal != 1000 || timing.SendExpectedTxsTotal != 1000 {
+		t.Fatalf("send counts = start %d complete %d sent %d expected %d, want 2/2/1000/1000", timing.SendStartEvents, timing.SendCompleteEvents, timing.SendTxsSentTotal, timing.SendExpectedTxsTotal)
+	}
+	if timing.SendDurations == nil || timing.SendDurations.Count != 2 {
+		t.Fatalf("send durations = %+v, want 2 entries", timing.SendDurations)
+	}
+	if !nearlyEqual(timing.SendDurations.TotalSeconds, 0.761) {
+		t.Fatalf("send total = %v, want 0.761", timing.SendDurations.TotalSeconds)
+	}
+	if !nearlyEqual(timing.SendDurations.MaxSeconds, 0.517) {
+		t.Fatalf("send max = %v, want 0.517", timing.SendDurations.MaxSeconds)
+	}
+	if !nearlyEqual(timing.SendTxsPerSecond, 1000/0.761) {
+		t.Fatalf("send tx/s = %v, want %v", timing.SendTxsPerSecond, 1000/0.761)
+	}
+	if timing.BlockProcessingToProcessedDurations == nil || timing.BlockProcessingToProcessedDurations.Count != 2 {
+		t.Fatalf("process durations = %+v, want 2 entries", timing.BlockProcessingToProcessedDurations)
+	}
+	if !nearlyEqual(timing.BlockProcessingToProcessedDurations.TotalSeconds, 0.767) {
+		t.Fatalf("process total = %v, want 0.767", timing.BlockProcessingToProcessedDurations.TotalSeconds)
+	}
+	if timing.BlockEventToProcessingDurations == nil || !nearlyEqual(timing.BlockEventToProcessingDurations.MaxSeconds, 0.020) {
+		t.Fatalf("event->processing = %+v, want max 0.020", timing.BlockEventToProcessingDurations)
+	}
+	if timing.ChainTimestampToProcessingDurations == nil || timing.ChainTimestampToProcessingDurations.Count != 2 {
+		t.Fatalf("chain timestamp lags = %+v, want 2 entries", timing.ChainTimestampToProcessingDurations)
+	}
+}
+
+func TestSummarizePipelineSignalsPromotesCatalystBlockTiming(t *testing.T) {
+	obs := loadWindowObservation{
+		Seconds:                10,
+		IncludedTransactions:   1000,
+		SuccessfulTransactions: 1000,
+		StorageSignals: []storageSignal{{
+			Name: "validator-0",
+		}},
+	}
+	logs := loadTestLogSummary{
+		CatalystTiming: &catalystLogTiming{
+			SendTxsSentTotal: 1000,
+			SendTxsPerSecond: 1250,
+			SendDurations: &durationStats{
+				Count:        2,
+				TotalSeconds: 0.8,
+				AvgSeconds:   0.4,
+				MaxSeconds:   0.5,
+			},
+			BlockProcessingToProcessedDurations: &durationStats{
+				Count:      2,
+				AvgSeconds: 0.45,
+				MaxSeconds: 0.6,
+			},
+		},
+	}
+
+	rows := summarizePipelineSignals(obs, logs)
+	if len(rows) != 1 {
+		t.Fatalf("pipeline rows len=%d want 1", len(rows))
+	}
+	row := rows[0]
+	if row.CatalystSendBlocks != 2 || row.CatalystSendTxs != 1000 || row.CatalystSendSeconds != 0.8 || row.AvgCatalystSendSeconds != 0.4 || row.MaxCatalystSendSeconds != 0.5 || row.CatalystSendTxsPerSecond != 1250 {
+		t.Fatalf("send timing row = %+v", row)
+	}
+	if row.CatalystBlockProcessBlocks != 2 || row.AvgCatalystBlockProcessSeconds != 0.45 || row.MaxCatalystBlockProcessSeconds != 0.6 {
+		t.Fatalf("block process timing row = %+v", row)
+	}
+}
+
 func TestSummarizeConsensusStepTimings(t *testing.T) {
 	deltas := map[string]float64{
 		`cometbft_consensus_step_duration_seconds_sum{chain_id="chain",step="Propose"}`:   1.5,
