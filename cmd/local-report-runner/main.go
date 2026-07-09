@@ -321,39 +321,64 @@ type loadWindowObservation struct {
 	TreeDBStatsTimeline    []treeDBStatsTimelineSample `json:"treedb_stats_timeline,omitempty"`
 	StorageSignals         []storageSignal             `json:"storage_signal_summary,omitempty"`
 	PipelineSignals        []pipelineSignal            `json:"pipeline_signal_summary,omitempty"`
+	WallClockIntervals     []loadWindowInterval        `json:"wall_clock_intervals,omitempty"`
 	Accounting             []loadWindowAccounting      `json:"load_window_accounting,omitempty"`
 	PhaseOverlaps          []loadWindowPhaseOverlap    `json:"phase_overlaps,omitempty"`
 	Error                  string                      `json:"error,omitempty"`
 }
 
+type loadWindowInterval struct {
+	Name       string    `json:"name,omitempty"`
+	Class      string    `json:"class"`
+	Method     string    `json:"method,omitempty"`
+	Source     string    `json:"source,omitempty"`
+	Provenance string    `json:"provenance,omitempty"`
+	Started    time.Time `json:"started"`
+	Ended      time.Time `json:"ended"`
+	Seconds    float64   `json:"seconds,omitempty"`
+	Note       string    `json:"note,omitempty"`
+}
+
+type loadWindowIntervalAttribution struct {
+	Class         string  `json:"class"`
+	Method        string  `json:"method,omitempty"`
+	Source        string  `json:"source,omitempty"`
+	Provenance    string  `json:"provenance,omitempty"`
+	IntervalCount int     `json:"interval_count,omitempty"`
+	UnionSeconds  float64 `json:"union_seconds,omitempty"`
+}
+
 type loadWindowAccounting struct {
-	Name                              string             `json:"name"`
-	LoadWindowStart                   time.Time          `json:"load_window_start,omitempty"`
-	LoadWindowEnd                     time.Time          `json:"load_window_end,omitempty"`
-	LoadWindowSeconds                 float64            `json:"load_window_seconds,omitempty"`
-	LoadGeneratorStart                *time.Time         `json:"load_generator_start,omitempty"`
-	LoadGeneratorEnd                  *time.Time         `json:"load_generator_end,omitempty"`
-	LoadGeneratorWallSeconds          float64            `json:"load_generator_wall_seconds,omitempty"`
-	ValidatorProcessCPUSecondsDelta   float64            `json:"validator_process_cpu_seconds_delta,omitempty"`
-	ValidatorCoreEquivalent           float64            `json:"validator_core_equivalent,omitempty"`
-	ABCIObservedSumSeconds            float64            `json:"abci_observed_sum_seconds,omitempty"`
-	ABCIByMethodSeconds               map[string]float64 `json:"abci_by_method_seconds,omitempty"`
-	ABCIBusyUnionSeconds              *float64           `json:"abci_busy_union_seconds"`
-	ABCIBusyUnionMissingReason        string             `json:"abci_busy_union_missing_reason,omitempty"`
-	ABCIOverlapSeconds                *float64           `json:"abci_overlap_seconds"`
-	ABCIOverlapMissingReason          string             `json:"abci_overlap_missing_reason,omitempty"`
-	ValidatorNonABCIWallSeconds       *float64           `json:"validator_non_abci_wall_seconds"`
-	ValidatorNonABCIWallMissingReason string             `json:"validator_non_abci_wall_missing_reason,omitempty"`
-	ValidatorNonABCIApproxSeconds     float64            `json:"validator_non_abci_approx_seconds,omitempty"`
-	ValidatorNonABCIPctApprox         float64            `json:"validator_non_abci_pct_approx,omitempty"`
-	LoadgenClientWaitSeconds          *float64           `json:"loadgen_client_wait_seconds"`
-	LoadgenClientWaitMissingReason    string             `json:"loadgen_client_wait_missing_reason,omitempty"`
-	ConsensusBlockCadenceSeconds      float64            `json:"consensus_block_cadence_seconds,omitempty"`
-	MempoolBacklogSummary             string             `json:"mempool_backlog_summary,omitempty"`
-	UnaccountedResidualSeconds        float64            `json:"unaccounted_residual_seconds,omitempty"`
-	UnaccountedResidualFormula        string             `json:"unaccounted_residual_formula,omitempty"`
-	UnaccountedResidualClassification string             `json:"unaccounted_residual_classification,omitempty"`
-	Notes                             []string           `json:"notes,omitempty"`
+	Name                              string                          `json:"name"`
+	LoadWindowStart                   time.Time                       `json:"load_window_start,omitempty"`
+	LoadWindowEnd                     time.Time                       `json:"load_window_end,omitempty"`
+	LoadWindowSeconds                 float64                         `json:"load_window_seconds,omitempty"`
+	LoadGeneratorStart                *time.Time                      `json:"load_generator_start,omitempty"`
+	LoadGeneratorEnd                  *time.Time                      `json:"load_generator_end,omitempty"`
+	LoadGeneratorWallSeconds          float64                         `json:"load_generator_wall_seconds,omitempty"`
+	ValidatorProcessCPUSecondsDelta   float64                         `json:"validator_process_cpu_seconds_delta,omitempty"`
+	ValidatorCoreEquivalent           float64                         `json:"validator_core_equivalent,omitempty"`
+	ABCIObservedSumSeconds            float64                         `json:"abci_observed_sum_seconds,omitempty"`
+	ABCIByMethodSeconds               map[string]float64              `json:"abci_by_method_seconds,omitempty"`
+	ABCIBusyUnionSeconds              *float64                        `json:"abci_busy_union_seconds"`
+	ABCIIntervalCount                 int                             `json:"abci_interval_count,omitempty"`
+	ABCIIntervalProvenance            string                          `json:"abci_interval_provenance,omitempty"`
+	ABCIBusyUnionMissingReason        string                          `json:"abci_busy_union_missing_reason,omitempty"`
+	ABCIOverlapSeconds                *float64                        `json:"abci_overlap_seconds"`
+	ABCIOverlapMissingReason          string                          `json:"abci_overlap_missing_reason,omitempty"`
+	ValidatorNonABCIWallSeconds       *float64                        `json:"validator_non_abci_wall_seconds"`
+	ValidatorNonABCIWallMissingReason string                          `json:"validator_non_abci_wall_missing_reason,omitempty"`
+	ValidatorNonABCIApproxSeconds     float64                         `json:"validator_non_abci_approx_seconds,omitempty"`
+	ValidatorNonABCIPctApprox         float64                         `json:"validator_non_abci_pct_approx,omitempty"`
+	LoadgenClientWaitSeconds          *float64                        `json:"loadgen_client_wait_seconds"`
+	LoadgenClientWaitMissingReason    string                          `json:"loadgen_client_wait_missing_reason,omitempty"`
+	ConsensusBlockCadenceSeconds      float64                         `json:"consensus_block_cadence_seconds,omitempty"`
+	MempoolBacklogSummary             string                          `json:"mempool_backlog_summary,omitempty"`
+	UnaccountedResidualSeconds        float64                         `json:"unaccounted_residual_seconds,omitempty"`
+	UnaccountedResidualFormula        string                          `json:"unaccounted_residual_formula,omitempty"`
+	UnaccountedResidualClassification string                          `json:"unaccounted_residual_classification,omitempty"`
+	IntervalAttribution               []loadWindowIntervalAttribution `json:"interval_attribution,omitempty"`
+	Notes                             []string                        `json:"notes,omitempty"`
 }
 
 type pipelineSignal struct {
@@ -2145,6 +2170,155 @@ func classifyLoadWindowPhase(row loadWindowPhaseOverlap) string {
 	default:
 		return "outside_window"
 	}
+}
+
+type clippedClockInterval struct {
+	started time.Time
+	ended   time.Time
+}
+
+func summarizeLoadWindowIntervalAttributions(intervals []loadWindowInterval, nodeName string, windowStart, windowEnd time.Time) []loadWindowIntervalAttribution {
+	if len(intervals) == 0 || windowStart.IsZero() || windowEnd.IsZero() || !windowEnd.After(windowStart) {
+		return nil
+	}
+	type key struct {
+		class      string
+		method     string
+		source     string
+		provenance string
+	}
+	groups := map[key][]clippedClockInterval{}
+	for _, interval := range intervals {
+		if !loadWindowIntervalMatchesNode(interval, nodeName) {
+			continue
+		}
+		clipped, ok := clipLoadWindowInterval(interval, windowStart, windowEnd)
+		if !ok {
+			continue
+		}
+		k := key{
+			class:      interval.Class,
+			method:     interval.Method,
+			source:     interval.Source,
+			provenance: interval.Provenance,
+		}
+		groups[k] = append(groups[k], clipped)
+	}
+	out := make([]loadWindowIntervalAttribution, 0, len(groups))
+	for k, clipped := range groups {
+		out = append(out, loadWindowIntervalAttribution{
+			Class:         k.class,
+			Method:        k.method,
+			Source:        k.source,
+			Provenance:    k.provenance,
+			IntervalCount: len(clipped),
+			UnionSeconds:  clippedClockIntervalUnionSeconds(clipped),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Class != out[j].Class {
+			return out[i].Class < out[j].Class
+		}
+		if out[i].Method != out[j].Method {
+			return out[i].Method < out[j].Method
+		}
+		if out[i].Source != out[j].Source {
+			return out[i].Source < out[j].Source
+		}
+		return out[i].Provenance < out[j].Provenance
+	})
+	return out
+}
+
+func loadWindowIntervalClassUnion(intervals []loadWindowInterval, nodeName, class string, windowStart, windowEnd time.Time) (float64, int, string) {
+	if len(intervals) == 0 || class == "" || windowStart.IsZero() || windowEnd.IsZero() || !windowEnd.After(windowStart) {
+		return 0, 0, ""
+	}
+	var clipped []clippedClockInterval
+	provenance := map[string]struct{}{}
+	for _, interval := range intervals {
+		if interval.Class != class || !loadWindowIntervalMatchesNode(interval, nodeName) {
+			continue
+		}
+		next, ok := clipLoadWindowInterval(interval, windowStart, windowEnd)
+		if !ok {
+			continue
+		}
+		clipped = append(clipped, next)
+		source := interval.Provenance
+		if source == "" {
+			source = interval.Source
+		}
+		if source != "" {
+			provenance[source] = struct{}{}
+		}
+	}
+	return clippedClockIntervalUnionSeconds(clipped), len(clipped), sortedSetSummary(provenance)
+}
+
+func loadWindowIntervalMatchesNode(interval loadWindowInterval, nodeName string) bool {
+	if nodeName == "" {
+		return true
+	}
+	return interval.Name == nodeName
+}
+
+func clipLoadWindowInterval(interval loadWindowInterval, windowStart, windowEnd time.Time) (clippedClockInterval, bool) {
+	if interval.Started.IsZero() || interval.Ended.IsZero() || !interval.Ended.After(interval.Started) {
+		return clippedClockInterval{}, false
+	}
+	started := maxTime(interval.Started, windowStart)
+	ended := minTime(interval.Ended, windowEnd)
+	if !ended.After(started) {
+		return clippedClockInterval{}, false
+	}
+	return clippedClockInterval{started: started, ended: ended}, true
+}
+
+func clippedClockIntervalUnionSeconds(intervals []clippedClockInterval) float64 {
+	merged := mergeClippedClockIntervals(intervals)
+	var total float64
+	for _, interval := range merged {
+		total += interval.ended.Sub(interval.started).Seconds()
+	}
+	return total
+}
+
+func mergeClippedClockIntervals(intervals []clippedClockInterval) []clippedClockInterval {
+	if len(intervals) == 0 {
+		return nil
+	}
+	ordered := append([]clippedClockInterval(nil), intervals...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].started.Equal(ordered[j].started) {
+			return ordered[i].ended.Before(ordered[j].ended)
+		}
+		return ordered[i].started.Before(ordered[j].started)
+	})
+	merged := []clippedClockInterval{ordered[0]}
+	for _, interval := range ordered[1:] {
+		last := &merged[len(merged)-1]
+		if !interval.started.After(last.ended) {
+			if interval.ended.After(last.ended) {
+				last.ended = interval.ended
+			}
+			continue
+		}
+		merged = append(merged, interval)
+	}
+	return merged
+}
+
+func sortedSetSummary(values map[string]struct{}) string {
+	if len(values) == 0 {
+		return ""
+	}
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
 }
 
 type loadWindowMonitor struct {
@@ -4181,6 +4355,8 @@ func summarizeLoadWindowAccounting(result runResult, obs loadWindowObservation) 
 	}
 	rows := make([]loadWindowAccounting, 0, len(obs.StorageSignals))
 	for _, signal := range obs.StorageSignals {
+		intervalAttribution := summarizeLoadWindowIntervalAttributions(obs.WallClockIntervals, signal.Name, obs.StartedAt, obs.EndedAt)
+		abciBusyUnionSeconds, abciIntervalCount, abciIntervalProvenance := loadWindowIntervalClassUnion(obs.WallClockIntervals, signal.Name, "abci", obs.StartedAt, obs.EndedAt)
 		row := loadWindowAccounting{
 			Name:                            signal.Name,
 			LoadWindowStart:                 obs.StartedAt,
@@ -4201,15 +4377,35 @@ func summarizeLoadWindowAccounting(result runResult, obs loadWindowObservation) 
 				"flush":            signal.ABCIFlushSeconds,
 				"other":            signal.ABCIOtherSeconds,
 			},
-			ABCIBusyUnionMissingReason:        "ABCI method interval start/end samples are not exported by this harness",
-			ABCIOverlapMissingReason:          "ABCI busy union unavailable; overlap cannot be computed from summed method counters",
-			ValidatorNonABCIWallMissingReason: "exact non-ABCI wall time requires ABCI busy union intervals",
-			ValidatorNonABCIApproxSeconds:     nonNegative(obs.Seconds - signal.ABCIObservedSeconds),
-			LoadgenClientWaitMissingReason:    "Catalyst aggregate logs do not export per-client wait or broadcast latency",
-			UnaccountedResidualFormula:        "max(0, load_window_seconds - abci_observed_sum_seconds)",
-			UnaccountedResidualClassification: "approximate_sum_based",
+			ValidatorNonABCIApproxSeconds:  nonNegative(obs.Seconds - signal.ABCIObservedSeconds),
+			LoadgenClientWaitMissingReason: "Catalyst aggregate logs do not export per-client wait or broadcast latency",
+			IntervalAttribution:            intervalAttribution,
 		}
-		row.UnaccountedResidualSeconds = row.ValidatorNonABCIApproxSeconds
+		if abciIntervalCount > 0 {
+			row.ABCIBusyUnionSeconds = &abciBusyUnionSeconds
+			row.ABCIIntervalCount = abciIntervalCount
+			row.ABCIIntervalProvenance = abciIntervalProvenance
+			if row.ABCIIntervalProvenance == "" {
+				row.ABCIIntervalProvenance = "wall_clock_intervals"
+			}
+			abciOverlapSeconds := nonNegative(signal.ABCIObservedSeconds - abciBusyUnionSeconds)
+			row.ABCIOverlapSeconds = &abciOverlapSeconds
+			validatorNonABCIWallSeconds := nonNegative(obs.Seconds - abciBusyUnionSeconds)
+			row.ValidatorNonABCIWallSeconds = &validatorNonABCIWallSeconds
+			row.UnaccountedResidualSeconds = validatorNonABCIWallSeconds
+			row.UnaccountedResidualFormula = "max(0, load_window_seconds - abci_busy_union_seconds)"
+			row.UnaccountedResidualClassification = "interval_union_based"
+			if signal.ABCIObservedSeconds < abciBusyUnionSeconds {
+				row.Notes = append(row.Notes, "ABCI busy union exceeds summed method seconds; interval source may be bounded or broader than method timer sums")
+			}
+		} else {
+			row.ABCIBusyUnionMissingReason = "ABCI method interval start/end samples are not exported by this harness"
+			row.ABCIOverlapMissingReason = "ABCI busy union unavailable; overlap cannot be computed from summed method counters"
+			row.ValidatorNonABCIWallMissingReason = "exact non-ABCI wall time requires ABCI busy union intervals"
+			row.UnaccountedResidualSeconds = row.ValidatorNonABCIApproxSeconds
+			row.UnaccountedResidualFormula = "max(0, load_window_seconds - abci_observed_sum_seconds)"
+			row.UnaccountedResidualClassification = "approximate_sum_based"
+		}
 		if obs.Seconds > 0 {
 			row.ValidatorCoreEquivalent = signal.ProcessCPUSecondsDelta / obs.Seconds
 			row.ValidatorNonABCIPctApprox = 100 * row.ValidatorNonABCIApproxSeconds / obs.Seconds
@@ -5193,9 +5389,9 @@ func writeLoadWindowAccountingMarkdown(b *strings.Builder, rows []loadWindowAcco
 		return
 	}
 	b.WriteString("### Accepted-Window Non-ABCI Accounting\n\n")
-	b.WriteString("Exact non-ABCI wall time requires ABCI interval union data. When intervals are unavailable, this table reports the explicit residual formula used for the approximate value.\n\n")
-	b.WriteString("| Node | Window s | Loadgen s | ABCI sum s | Commit s | Finalize s | CheckTx s | Approx non-ABCI s | Approx non-ABCI % | Process CPU s | Core equiv | Block cadence s | Missing exact fields | Residual formula |\n")
-	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n")
+	b.WriteString("Exact non-ABCI wall time is reported when ABCI interval union data is present. When intervals are unavailable, this table reports the explicit residual formula used for the approximate value.\n\n")
+	b.WriteString("| Node | Window s | Loadgen s | ABCI sum s | ABCI union s | ABCI overlap s | Commit s | Finalize s | CheckTx s | Exact non-ABCI s | Approx non-ABCI s | Approx non-ABCI % | Process CPU s | Core equiv | Block cadence s | Interval source | Missing exact fields | Residual formula |\n")
+	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |\n")
 	for _, row := range rows {
 		missing := accountingMissingSummary(row)
 		b.WriteString("| ")
@@ -5207,11 +5403,17 @@ func writeLoadWindowAccountingMarkdown(b *strings.Builder, rows []loadWindowAcco
 		b.WriteString(" | ")
 		b.WriteString(metricFloat(row.ABCIObservedSumSeconds))
 		b.WriteString(" | ")
+		b.WriteString(optionalMetricFloat(row.ABCIBusyUnionSeconds))
+		b.WriteString(" | ")
+		b.WriteString(optionalMetricFloat(row.ABCIOverlapSeconds))
+		b.WriteString(" | ")
 		b.WriteString(metricFloat(row.ABCIByMethodSeconds["commit"]))
 		b.WriteString(" | ")
 		b.WriteString(metricFloat(row.ABCIByMethodSeconds["finalize_block"]))
 		b.WriteString(" | ")
 		b.WriteString(metricFloat(row.ABCIByMethodSeconds["check_tx"]))
+		b.WriteString(" | ")
+		b.WriteString(optionalMetricFloat(row.ValidatorNonABCIWallSeconds))
 		b.WriteString(" | ")
 		b.WriteString(metricFloat(row.ValidatorNonABCIApproxSeconds))
 		b.WriteString(" | ")
@@ -5223,12 +5425,21 @@ func writeLoadWindowAccountingMarkdown(b *strings.Builder, rows []loadWindowAcco
 		b.WriteString(" | ")
 		b.WriteString(metricFloat(row.ConsensusBlockCadenceSeconds))
 		b.WriteString(" | ")
+		b.WriteString(mdCell(row.ABCIIntervalProvenance))
+		b.WriteString(" | ")
 		b.WriteString(mdCell(missing))
 		b.WriteString(" | ")
 		b.WriteString(mdCell(row.UnaccountedResidualFormula))
 		b.WriteString(" |\n")
 	}
 	b.WriteByte('\n')
+}
+
+func optionalMetricFloat(value *float64) string {
+	if value == nil {
+		return ""
+	}
+	return metricFloat(*value)
 }
 
 func accountingMissingSummary(row loadWindowAccounting) string {
