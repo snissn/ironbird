@@ -17,6 +17,15 @@ func nearlyEqual(got, want float64) bool {
 	return math.Abs(got-want) < 1e-9
 }
 
+func cadenceStageByName(stages []cadenceStage, name string) (cadenceStage, bool) {
+	for _, stage := range stages {
+		if stage.Name == name {
+			return stage, true
+		}
+	}
+	return cadenceStage{}, false
+}
+
 func TestParsePrometheusMetricsKeepsSelectedSeries(t *testing.T) {
 	text := `
 	# HELP cometbft_abci_connection_method_timing_seconds Timing for each ABCI method.
@@ -84,6 +93,70 @@ go_threads 8
 	}
 }
 
+func TestSummarizeStorageSignalsExtractsNodeCadenceMetrics(t *testing.T) {
+	before := []metricSnapshot{{
+		Name:    "validator-0",
+		Metrics: map[string]float64{},
+	}}
+	after := []metricSnapshot{{
+		Name: "validator-0",
+		Metrics: map[string]float64{
+			"cometbft_state_block_processing_time_sum":                 2500,
+			"cometbft_state_block_processing_time_count":               5,
+			"cometbft_consensus_commit_finalize_seconds_sum":           2.1,
+			"cometbft_consensus_commit_finalize_seconds_count":         3,
+			"cometbft_consensus_commit_block_store_seconds_sum":        1.2,
+			"cometbft_consensus_commit_block_store_seconds_count":      3,
+			"cometbft_consensus_commit_block_store_lock_seconds_sum":   0.05,
+			"cometbft_consensus_commit_block_store_lock_seconds_count": 3,
+			"cometbft_consensus_commit_consensus_wal_seconds_sum":      0.1,
+			"cometbft_consensus_commit_consensus_wal_seconds_count":    3,
+			"cometbft_consensus_commit_apply_block_seconds_sum":        0.6,
+			"cometbft_consensus_commit_apply_block_seconds_count":      3,
+			"cometbft_consensus_commit_apply_block_lock_seconds_sum":   0.05,
+			"cometbft_consensus_commit_apply_block_lock_seconds_count": 3,
+			"cometbft_consensus_commit_record_metrics_seconds_sum":     0.1,
+			"cometbft_consensus_commit_record_metrics_seconds_count":   3,
+			"cometbft_consensus_commit_update_state_seconds_sum":       0.1,
+			"cometbft_consensus_commit_update_state_seconds_count":     3,
+			"cometbft_state_save_tx_info_seconds_sum":                  0.45,
+			"cometbft_state_save_tx_info_seconds_count":                3,
+			"cometbft_state_mempool_lock_wait_seconds_sum":             0.15,
+			"cometbft_state_mempool_lock_wait_seconds_count":           3,
+			"cometbft_tx_indexer_tx_index_seconds_sum":                 0.7,
+			"cometbft_tx_indexer_tx_index_seconds_count":               7,
+			"cometbft_tx_indexer_indexed_txs_total":                    100,
+			"cometbft_mempool_successful_txs":                          80,
+		},
+	}}
+	signals := summarizeStorageSignals(before, after, nil, nil)
+	if len(signals) != 1 {
+		t.Fatalf("signals len=%d want 1", len(signals))
+	}
+	got := signals[0]
+	if !nearlyEqual(got.StateBlockProcessingSeconds, 2.5) || !nearlyEqual(got.StateBlockProcessingAvgSeconds, 0.5) {
+		t.Fatalf("state block processing seconds=%v avg=%v, want 2.5/0.5", got.StateBlockProcessingSeconds, got.StateBlockProcessingAvgSeconds)
+	}
+	if !nearlyEqual(got.BlockStoreWriteSeconds, 1.2) || got.BlockStoreWriteCount != 3 || !nearlyEqual(got.BlockStoreWriteAvgSeconds, 0.4) {
+		t.Fatalf("blockstore timing=%+v, want 1.2s count 3 avg 0.4", got)
+	}
+	if !nearlyEqual(got.TxIndexWriteSeconds, 0.7) || got.TxIndexWriteCount != 7 || !nearlyEqual(got.TxIndexWriteAvgSeconds, 0.1) {
+		t.Fatalf("tx-index timing=%+v, want 0.7s count 7 avg 0.1", got)
+	}
+	if got.TxIndexIndexedTxsDelta != 100 || got.MempoolSuccessfulTxsDelta != 80 {
+		t.Fatalf("count signals tx-index=%v mempool=%v, want 100/80", got.TxIndexIndexedTxsDelta, got.MempoolSuccessfulTxsDelta)
+	}
+	if !hasExactCommitSpanCoverage(got) {
+		t.Fatalf("expected complete exact consensus commit coverage: %+v", got.ExactCommitStageTimings)
+	}
+	if stage, ok := cadenceStageByName(got.ExactCommitStageTimings, "mempool lock wait"); !ok || stage.Parent != "state block commit" || !nearlyEqual(stage.Seconds, 0.15) {
+		t.Fatalf("mempool lock stage=%+v ok=%v, want exact nested stage", stage, ok)
+	}
+	if stage, ok := cadenceStageByName(got.ExactCommitStageTimings, "state save tx info"); !ok || stage.Parent != "state apply block" || !nearlyEqual(stage.Seconds, 0.45) {
+		t.Fatalf("save tx info stage=%+v ok=%v, want exact nested stage", stage, ok)
+	}
+}
+
 func TestMakePreseedConfigAccounts(t *testing.T) {
 	cfg := makePreseedConfig("accounts", 100, 5000)
 	if cfg.Profile != "accounts" {
@@ -118,7 +191,7 @@ func TestLaunchGenesisAccountsUsesPreseedTotal(t *testing.T) {
 }
 
 func TestSimappFullStackScenarioSetsAppAndNodeBackends(t *testing.T) {
-	sc := simappFullStackScenario("simapp-treedb-all", "full stack TreeDB", "treedb", 1, 0, 100, preseedConfig{}, 2, 10, "MsgSend", "", 0, 0, 1000000, "")
+	sc := simappFullStackScenario("simapp-treedb-all", "full stack TreeDB", "treedb", 1, 0, 100, preseedConfig{}, 2, 10, "MsgSend", "", 0, 0, 1000000, "", "kv")
 	if sc.AppDBBackend != "treedb" {
 		t.Fatalf("app backend = %q, want treedb", sc.AppDBBackend)
 	}
@@ -131,8 +204,14 @@ func TestSimappFullStackScenarioSetsAppAndNodeBackends(t *testing.T) {
 	if got := sc.CustomConfig["db_backend"]; got != "treedb" {
 		t.Fatalf("node config backend = %v, want treedb", got)
 	}
+	if sc.TxIndexer != "kv" || tomlNestedString(sc.CustomConfig, "tx_index", "indexer") != "kv" {
+		t.Fatalf("tx indexer scenario/config = %q/%v, want kv", sc.TxIndexer, sc.CustomConfig["tx_index"])
+	}
 	if !strings.Contains(sc.ReplaceCmd, "github.com/cometbft/cometbft-db=github.com/snissn/cometbft-db@"+simappCometDBVersion) {
 		t.Fatalf("replace command missing cometbft-db TreeDB fork: %s", sc.ReplaceCmd)
+	}
+	if !strings.Contains(sc.ReplaceCmd, "github.com/cometbft/cometbft=github.com/snissn/cometbft@"+simappCometBFTVersion) {
+		t.Fatalf("replace command missing instrumented CometBFT fork: %s", sc.ReplaceCmd)
 	}
 	if strings.Contains(sc.ReplaceCmd, "go mod edit") || strings.Contains(sc.ReplaceCmd, "&&") {
 		t.Fatalf("replace specs must not contain shell commands: %s", sc.ReplaceCmd)
@@ -159,8 +238,10 @@ func TestValidateBackendVerification(t *testing.T) {
 	valid, problem := validateBackendVerification(backendVerification{
 		ExpectedAppDBBackend:  "treedb",
 		ExpectedNodeDBBackend: "treedb",
+		ExpectedTxIndexer:     "kv",
 		ObservedAppDBBackend:  "treedb",
 		ObservedNodeDBBackend: "treedb",
+		ObservedTxIndexer:     "kv",
 	})
 	if !valid || problem != "" {
 		t.Fatalf("valid verification = %t problem=%q, want valid", valid, problem)
@@ -253,8 +334,8 @@ func TestSummarizePipelineSignalsPromotesAcceptedWindowCounters(t *testing.T) {
 			ABCIFinalizeBlockCount:        60,
 			ABCICommitSeconds:             3,
 			ABCICommitCount:               60,
-			ConsensusBlockIntervalSeconds: 120,
-			ConsensusBlockIntervalCount:   60,
+			ConsensusBlockIntervalSeconds: 177,
+			ConsensusBlockIntervalCount:   59,
 			ConsensusTotalTxsDelta:        60000,
 			MempoolSuccessfulTxsDelta:     59000,
 			SDKTxCountDelta:               60000,
@@ -475,9 +556,27 @@ func TestSummarizeCadenceDiagnosticsSeparatesBlockStagesFromResidual(t *testing.
 			ABCIProcessProposalCount:      10,
 			ABCICheckTxSeconds:            3,
 			ABCICheckTxCount:              1000,
-			ConsensusBlockIntervalSeconds: 10,
-			ConsensusBlockIntervalCount:   10,
+			StateBlockProcessingSumRaw:    250,
+			StateBlockProcessingSeconds:   0.25,
+			StateBlockProcessingCount:     10,
+			TxIndexIndexedTxsDelta:        1000,
+			MempoolSuccessfulTxsDelta:     1000,
+			ConsensusBlockIntervalSeconds: 18,
+			ConsensusBlockIntervalCount:   9,
 			ConsensusTotalTxsDelta:        1000,
+			ExactCommitStageTimings: []cadenceStage{
+				{Name: "consensus commit", Class: "consensus_commit", Source: "cometbft_consensus_commit_finalize_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 2, Count: 10},
+				{Name: "commit blockstore", Parent: "consensus commit", Class: "node_db_blockstore", Source: "cometbft_consensus_commit_block_store_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 0.4, Count: 10},
+				{Name: "commit blockstore lock", Parent: "consensus commit", Class: "consensus_lock", Source: "cometbft_consensus_commit_block_store_lock_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 0.01, Count: 10},
+				{Name: "commit consensus WAL", Parent: "consensus commit", Class: "consensus_wal", Source: "cometbft_consensus_commit_consensus_wal_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 0.1, Count: 10},
+				{Name: "commit apply block", Parent: "consensus commit", Class: "block_execution", Source: "cometbft_consensus_commit_apply_block_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 1.2, Count: 10},
+				{Name: "commit apply block lock", Parent: "consensus commit", Class: "consensus_lock", Source: "cometbft_consensus_commit_apply_block_lock_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 0.01, Count: 10},
+				{Name: "commit record metrics", Parent: "consensus commit", Class: "consensus_bookkeeping", Source: "cometbft_consensus_commit_record_metrics_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 0.1, Count: 10},
+				{Name: "commit update consensus state", Parent: "consensus commit", Class: "consensus_bookkeeping", Source: "cometbft_consensus_commit_update_state_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 0.2, Count: 10},
+				{Name: "mempool lock wait", Parent: "state block commit", Class: "mempool_contention", Source: "cometbft_state_mempool_lock_wait_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 0.05, Count: 10},
+				{Name: "mempool lock held", Parent: "state block commit", Class: "mempool_contention", Source: "cometbft_state_mempool_lock_held_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 0.5, Count: 10},
+				{Name: "tx index tx write", Parent: "tx index block total", Class: "node_db_tx_index", Source: "cometbft_tx_indexer_tx_index_seconds", Provenance: "exact_prometheus_span_delta", Seconds: 0.2, Count: 10},
+			},
 			ConsensusStepTimings: []cadenceStage{{
 				Name:       "Propose",
 				Class:      "consensus_step",
@@ -492,12 +591,12 @@ func TestSummarizeCadenceDiagnosticsSeparatesBlockStagesFromResidual(t *testing.
 			Name:                          "validator-0",
 			AvgTxsPerConsensusBlock:       100,
 			AvgBlockIntervalSeconds:       1,
-			ConsensusBlockIntervalCount:   10,
-			ConsensusBlockIntervalSeconds: 10,
+			ConsensusBlockIntervalCount:   9,
+			ConsensusBlockIntervalSeconds: 9,
 		}},
 	}
 
-	rows := summarizeCadenceDiagnostics(obs)
+	rows := summarizeCadenceDiagnostics(obs, loadTestLogSummary{})
 	if len(rows) != 1 {
 		t.Fatalf("cadence rows len=%d want 1", len(rows))
 	}
@@ -520,16 +619,131 @@ func TestSummarizeCadenceDiagnosticsSeparatesBlockStagesFromResidual(t *testing.
 	if !nearlyEqual(row.CadenceResidualPctOfBlockInterval, 62.5) {
 		t.Fatalf("residual percent = %v, want 62.5", row.CadenceResidualPctOfBlockInterval)
 	}
-	if row.ExactEventSpanCoverage {
-		t.Fatalf("expected exact event coverage to be false until event-level spans exist")
+	if !row.ExactEventSpanCoverage {
+		t.Fatalf("expected exact consensus commit span coverage")
 	}
 	if len(row.MissingEventSpans) == 0 {
 		t.Fatalf("expected missing event span owners to be named")
+	}
+	if stage, ok := cadenceStageByName(row.Stages, "state block processing"); !ok || stage.Class != "block_execution_cadence" || !nearlyEqual(stage.PerBlockSeconds, 0.025) || stage.IncludedInResidual {
+		t.Fatalf("state block processing stage = %+v, ok=%v; want attribution stage outside residual", stage, ok)
+	}
+	if stage, ok := cadenceStageByName(row.Stages, "commit blockstore"); !ok || stage.Parent != "consensus commit" || stage.Class != "node_db_blockstore" || !nearlyEqual(stage.PerBlockSeconds, 0.04) || stage.IncludedInResidual {
+		t.Fatalf("blockstore stage = %+v, ok=%v; want attribution stage outside residual", stage, ok)
+	}
+	if stage, ok := cadenceStageByName(row.Stages, "tx index tx write"); !ok || stage.Class != "node_db_tx_index" || !nearlyEqual(stage.PerBlockSeconds, 0.02) || stage.IncludedInResidual {
+		t.Fatalf("tx-index stage = %+v, ok=%v; want attribution stage outside residual", stage, ok)
+	}
+	if stage, ok := cadenceStageByName(row.Stages, "mempool successful txs"); !ok || stage.Class != "local_broadcast_admission" || stage.Count != 1000 || stage.Seconds != 0 {
+		t.Fatalf("mempool count stage = %+v, ok=%v; want count-only local admission signal", stage, ok)
 	}
 	for _, stage := range row.Stages {
 		if stage.Name == "check_tx" && stage.IncludedInResidual {
 			t.Fatalf("check_tx must not be included in block-stage residual: %+v", stage)
 		}
+	}
+}
+
+func TestSummarizeCadenceDiagnosticsPromotesTreeDBAndCatalystStages(t *testing.T) {
+	obs := loadWindowObservation{
+		Seconds:              10,
+		IncludedTransactions: 1000,
+		StorageSignals: []storageSignal{{
+			Name:                          "validator-0",
+			ABCICommitSeconds:             1,
+			ABCICommitCount:               10,
+			ABCIFinalizeBlockSeconds:      1,
+			ABCIFinalizeBlockCount:        10,
+			ConsensusBlockIntervalSeconds: 10,
+			ConsensusBlockIntervalCount:   10,
+			ConsensusTotalTxsDelta:        1000,
+		}},
+		TreeDBStatDeltas: []treeDBStatsDelta{
+			{
+				Name:  "validator-0",
+				Store: "application.db",
+				Metrics: map[string]metricDeltaValue{
+					"treedb.command_wal.writer.sync_ns_total": {
+						Delta: 2_000_000_000,
+					},
+					"treedb.value_log.write_ns_total": {
+						Delta: 1_500_000_000,
+					},
+				},
+			},
+			{
+				Name:  "validator-0",
+				Store: "blockstore.db",
+				Metrics: map[string]metricDeltaValue{
+					"treedb.command_wal.writer.sync_ns_total": {
+						Delta: 500_000_000,
+					},
+				},
+			},
+			{
+				Name:  "validator-0",
+				Store: "tx_index.db",
+				Metrics: map[string]metricDeltaValue{
+					"treedb.command_wal.writer.sync_ns_total": {
+						Delta: 250_000_000,
+					},
+				},
+			},
+		},
+	}
+	logs := loadTestLogSummary{
+		CatalystTiming: &catalystLogTiming{
+			SendDurations: &durationStats{
+				Count:        2,
+				TotalSeconds: 1,
+				AvgSeconds:   0.5,
+			},
+			BlockEventToProcessingDurations: &durationStats{
+				Count:        2,
+				TotalSeconds: 0.4,
+				AvgSeconds:   0.2,
+			},
+			BlockProcessingToProcessedDurations: &durationStats{
+				Count:        2,
+				TotalSeconds: 0.6,
+				AvgSeconds:   0.3,
+			},
+		},
+	}
+
+	rows := summarizeCadenceDiagnostics(obs, logs)
+	if len(rows) != 1 {
+		t.Fatalf("cadence rows len=%d want 1", len(rows))
+	}
+	row := rows[0]
+	for _, want := range []struct {
+		name       string
+		class      string
+		provenance string
+		seconds    float64
+	}{
+		{"treedb application.db command WAL", "db_adapter_commit_internal", "treedb_debug_vars_delta", 2},
+		{"treedb application.db value log", "db_adapter_commit_internal", "treedb_debug_vars_delta", 1.5},
+		{"treedb blockstore.db command WAL", "node_db_blockstore", "treedb_debug_vars_delta", 0.5},
+		{"treedb tx_index.db command WAL", "node_db_tx_index", "treedb_debug_vars_delta", 0.25},
+		{"catalyst send transactions", "local_broadcast_admission", "retained_catalyst_log_span", 1},
+		{"catalyst block event to processing", "block_execution_cadence", "retained_catalyst_log_span", 0.4},
+		{"catalyst block processing to processed", "block_execution_cadence", "retained_catalyst_log_span", 0.6},
+	} {
+		stage, ok := cadenceStageByName(row.Stages, want.name)
+		if !ok {
+			t.Fatalf("missing cadence stage %q in %+v", want.name, row.Stages)
+		}
+		if stage.Class != want.class || stage.Provenance != want.provenance || !nearlyEqual(stage.Seconds, want.seconds) || stage.IncludedInResidual {
+			t.Fatalf("stage %q = %+v, want class=%q provenance=%q seconds=%v outside residual", want.name, stage, want.class, want.provenance, want.seconds)
+		}
+	}
+	missing := strings.Join(row.MissingEventSpans, "; ")
+	if strings.Contains(missing, "TreeDB debug vars were not collected") {
+		t.Fatalf("missing spans still claimed TreeDB stats were absent: %s", missing)
+	}
+	if !strings.Contains(missing, "exact start/end spans remain unavailable") {
+		t.Fatalf("missing spans did not preserve exact-span caveat: %s", missing)
 	}
 }
 
@@ -551,10 +765,12 @@ func TestSummarizeLoadWindowAccountingMarksApproximateResidual(t *testing.T) {
 			Name:                          "validator-0",
 			ABCIObservedSeconds:           3,
 			ABCICommitSeconds:             1,
+			ABCICommitCount:               5,
 			ABCIFinalizeBlockSeconds:      1.25,
+			ABCIFinalizeBlockCount:        5,
 			ABCICheckTxSeconds:            0.5,
 			ProcessCPUSecondsDelta:        25,
-			ConsensusBlockIntervalSeconds: 20,
+			ConsensusBlockIntervalSeconds: 30,
 			ConsensusBlockIntervalCount:   10,
 		}},
 		PipelineSignals: []pipelineSignal{{
@@ -746,7 +962,7 @@ func TestSummarizeLoadWindowAccountingUsesABCIIntervals(t *testing.T) {
 	if row.ABCIBusyUnionMissingReason != "" || row.ValidatorNonABCIWallMissingReason != "" {
 		t.Fatalf("unexpected missing reasons: busy=%q wall=%q", row.ABCIBusyUnionMissingReason, row.ValidatorNonABCIWallMissingReason)
 	}
-	if row.UnaccountedResidualFormula != "max(0, load_window_seconds - abci_busy_union_seconds)" || row.UnaccountedResidualClassification != "interval_union_based" {
+	if row.UnaccountedResidualFormula != "max(0, load_window_seconds - abci_busy_union_seconds)" || row.UnaccountedResidualClassification != "exact_interval_union" {
 		t.Fatalf("residual formula/classification = %q/%q", row.UnaccountedResidualFormula, row.UnaccountedResidualClassification)
 	}
 	payload, err := json.Marshal(row)
@@ -1005,8 +1221,11 @@ func TestBoundedSampleABCIIntervalsFeedAccounting(t *testing.T) {
 	if row.ValidatorNonABCIWallSeconds == nil || *row.ValidatorNonABCIWallSeconds != 0 {
 		t.Fatalf("bounded non-ABCI wall = %v, want 0", row.ValidatorNonABCIWallSeconds)
 	}
-	if row.UnaccountedResidualClassification != "interval_union_based" {
-		t.Fatalf("residual classification = %q, want interval_union_based", row.UnaccountedResidualClassification)
+	if row.UnaccountedResidualClassification != "bounded_sample_lower_bound" {
+		t.Fatalf("residual classification = %q, want bounded_sample_lower_bound", row.UnaccountedResidualClassification)
+	}
+	if row.ABCIOverlapSeconds != nil || row.ABCIOverlapMissingReason == "" {
+		t.Fatalf("bounded overlap = %v reason=%q, want unavailable with reason", row.ABCIOverlapSeconds, row.ABCIOverlapMissingReason)
 	}
 }
 
@@ -1202,7 +1421,7 @@ func TestRenderReportMarkdownIncludesMetricDeltasAndProfileManifest(t *testing.T
 		"### Accepted-Window Cadence Diagnostics",
 		"| validator-0 | 10 | 1.25 | 10 | 0.25 | 0.01 | 0 | 1 | 80 | false | DB adapter WriteSync / command-WAL / value-log / checkpoint spans are not exported as event-level load-window spans |",
 		"### Accepted-Window Cadence Diagnostic Stages",
-		"| validator-0 | commit | abci_block_stage | cometbft_abci_connection_method_timing_seconds | prometheus_counter_delta | 0.5 | 10 | 0.05 | 0.05 | true |  |",
+		"| validator-0 | commit |  | abci_block_stage | cometbft_abci_connection_method_timing_seconds | prometheus_counter_delta | 0.5 | 10 | 0.05 | 0.05 | true |  |",
 		"### Accepted-Window Metric Deltas",
 		"treedb_vlog_write_seconds_sum",
 		"| validator-0 | treedb_vlog_write_seconds_sum | 1 | 3.25 | 2.25 |",
@@ -1405,22 +1624,23 @@ func TestRenderReportMarkdownIncludesAccountingTimelineAndDwell(t *testing.T) {
 				SuccessfulTransactions: 1000,
 				TargetTransactions:     1000,
 				Accounting: []loadWindowAccounting{{
-					Name:                            "validator-0",
-					LoadWindowSeconds:               10,
-					LoadGeneratorWallSeconds:        11,
-					ABCIObservedSumSeconds:          3,
-					ABCIBusyUnionSeconds:            floatPtr(2.5),
-					ABCIOverlapSeconds:              floatPtr(0.5),
-					ABCIByMethodSeconds:             map[string]float64{"commit": 1, "finalize_block": 1.25, "check_tx": 0.5},
-					ValidatorNonABCIWallSeconds:     floatPtr(7.5),
-					ValidatorNonABCIApproxSeconds:   7,
-					ValidatorNonABCIPctApprox:       70,
-					ValidatorProcessCPUSecondsDelta: 25,
-					ValidatorCoreEquivalent:         2.5,
-					ConsensusBlockCadenceSeconds:    2,
-					ABCIIntervalProvenance:          "exact_event",
-					LoadgenClientWaitMissingReason:  "Catalyst wait unavailable",
-					UnaccountedResidualFormula:      "max(0, load_window_seconds - abci_busy_union_seconds)",
+					Name:                              "validator-0",
+					LoadWindowSeconds:                 10,
+					LoadGeneratorWallSeconds:          11,
+					ABCIObservedSumSeconds:            3,
+					ABCIBusyUnionSeconds:              floatPtr(2.5),
+					ABCIOverlapSeconds:                floatPtr(0.5),
+					ABCIByMethodSeconds:               map[string]float64{"commit": 1, "finalize_block": 1.25, "check_tx": 0.5},
+					ValidatorNonABCIWallSeconds:       floatPtr(7.5),
+					ValidatorNonABCIApproxSeconds:     7,
+					ValidatorNonABCIPctApprox:         70,
+					ValidatorProcessCPUSecondsDelta:   25,
+					ValidatorCoreEquivalent:           2.5,
+					ConsensusBlockCadenceSeconds:      2,
+					ABCIIntervalProvenance:            "exact_event",
+					LoadgenClientWaitMissingReason:    "Catalyst wait unavailable",
+					UnaccountedResidualFormula:        "max(0, load_window_seconds - abci_busy_union_seconds)",
+					UnaccountedResidualClassification: "exact_interval_union",
 				}},
 				TreeDBStatsTimeline: []treeDBStatsTimelineSample{{
 					Label:          "load_start_proxy",
@@ -1456,6 +1676,8 @@ func TestRenderReportMarkdownIncludesAccountingTimelineAndDwell(t *testing.T) {
 	for _, want := range []string{
 		"### Accepted-Window Non-ABCI Accounting",
 		"| validator-0 | 10 | 11 | 3 | 2.5 | 0.5 | 1 | 1.25 | 0.5 | 7.5 | 7 | 70 | 25 | 2.5 | 2 | exact_event |",
+		"exact_interval_union",
+		"Scrape-bounded intervals only show that an ABCI counter changed somewhere inside each scrape interval",
 		"### Accepted-Window TreeDB Stats Timeline",
 		"| load_end | 2026-07-08T12:00:10Z | 10 | 1 |",
 		"## plain-send-treedb TreeDB Post-Load Dwell",
@@ -1620,6 +1842,48 @@ func TestSplitAppProfileRequestsForRawTxAuditKeepsCPUAfterAudit(t *testing.T) {
 	}
 	if len(postAudit) != 1 || postAudit[0].Kind != "validator_cpu" {
 		t.Fatalf("post-audit requests = %+v, want only validator_cpu", postAudit)
+	}
+}
+
+func TestRawTxAuditDecision(t *testing.T) {
+	tests := []struct {
+		name       string
+		scenario   scenario
+		requested  bool
+		wantRun    bool
+		wantReason string
+	}{
+		{
+			name:       "null indexer",
+			scenario:   scenario{TxIndexer: "null"},
+			requested:  true,
+			wantReason: "disabled because tx_index.indexer=null does not support CometBFT /tx queries",
+		},
+		{
+			name:      "kv indexer",
+			scenario:  scenario{TxIndexer: "kv"},
+			requested: true,
+			wantRun:   true,
+		},
+		{
+			name:       "disabled flag",
+			scenario:   scenario{TxIndexer: "kv"},
+			wantReason: "disabled by -raw-tx-audit=false",
+		},
+		{
+			name:      "evm chain",
+			scenario:  scenario{IsEVMChain: true, TxIndexer: "kv"},
+			requested: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRun, gotReason := rawTxAuditDecision(tt.scenario, tt.requested)
+			if gotRun != tt.wantRun || gotReason != tt.wantReason {
+				t.Fatalf("rawTxAuditDecision() = (%t, %q), want (%t, %q)", gotRun, gotReason, tt.wantRun, tt.wantReason)
+			}
+		})
 	}
 }
 
@@ -1883,6 +2147,42 @@ func TestCorrectedLoadTestUsesAppMetricsWhenAuditSkipped(t *testing.T) {
 	}
 	if len(got.AppMetricsIncludedCandidates) == 0 {
 		t.Fatalf("expected app metric candidates")
+	}
+}
+
+func TestCorrectedLoadTestIgnoresRawAuditForNullIndexer(t *testing.T) {
+	result := runResult{
+		Scenario: scenario{TxIndexer: "null"},
+		LoadTestResult: ctlt.LoadTestResult{
+			Overall: ctlt.OverallStats{
+				TotalTransactions:  150,
+				FailedTransactions: 150,
+				Runtime:            30 * time.Second,
+			},
+		},
+		RawTxSummary: &txAuditSummary{
+			Queried: 150,
+		},
+		StorageSignals: []storageSignal{{
+			Name:                   "validator-0",
+			ConsensusTotalTxsDelta: 150,
+			SDKTxCountDelta:        150,
+			SDKTxSuccessfulDelta:   150,
+		}},
+	}
+
+	got := summarizeCorrectedLoadTest(result)
+	if got == nil {
+		t.Fatalf("corrected summary was nil")
+	}
+	if got.Source != "app_metrics" {
+		t.Fatalf("source = %q, want app_metrics", got.Source)
+	}
+	if got.IncludedTransactions != 150 || got.SuccessfulTransactions != 150 || got.FailedTransactions != 0 {
+		t.Fatalf("corrected counts = included %d success %d failed %d, want 150/150/0", got.IncludedTransactions, got.SuccessfulTransactions, got.FailedTransactions)
+	}
+	if got.TPS != 5 {
+		t.Fatalf("tps = %v, want 5", got.TPS)
 	}
 }
 

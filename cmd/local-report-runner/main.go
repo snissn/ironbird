@@ -69,6 +69,7 @@ type scenario struct {
 	CatalystVersion   string                 `json:"catalyst_version,omitempty"`
 	AppDBBackend      string                 `json:"app_db_backend,omitempty"`
 	NodeDBBackend     string                 `json:"node_db_backend,omitempty"`
+	TxIndexer         string                 `json:"tx_indexer,omitempty"`
 	Genesis           []chain.GenesisKV      `json:"genesis"`
 	CustomAppConfig   map[string]interface{} `json:"custom_app_config,omitempty"`
 	CustomConfig      map[string]interface{} `json:"custom_consensus_config,omitempty"`
@@ -162,8 +163,10 @@ type loadWindowPhaseOverlap struct {
 type backendVerification struct {
 	ExpectedAppDBBackend  string `json:"expected_app_db_backend,omitempty"`
 	ExpectedNodeDBBackend string `json:"expected_node_db_backend,omitempty"`
+	ExpectedTxIndexer     string `json:"expected_tx_indexer,omitempty"`
 	ObservedAppDBBackend  string `json:"observed_app_db_backend,omitempty"`
 	ObservedNodeDBBackend string `json:"observed_node_db_backend,omitempty"`
+	ObservedTxIndexer     string `json:"observed_tx_indexer,omitempty"`
 	AppConfigPath         string `json:"app_config_path,omitempty"`
 	NodeConfigPath        string `json:"node_config_path,omitempty"`
 	Valid                 bool   `json:"valid"`
@@ -284,7 +287,16 @@ type storageSignal struct {
 	CommitShareOfObservedABCI       float64        `json:"commit_share_of_observed_abci,omitempty"`
 	CommitShareOfCommitPlusFinalize float64        `json:"commit_share_of_commit_plus_finalize,omitempty"`
 	StateBlockProcessingSumRaw      float64        `json:"state_block_processing_sum_raw,omitempty"`
+	StateBlockProcessingSeconds     float64        `json:"state_block_processing_seconds,omitempty"`
 	StateBlockProcessingCount       int            `json:"state_block_processing_count,omitempty"`
+	StateBlockProcessingAvgSeconds  float64        `json:"state_block_processing_avg_seconds,omitempty"`
+	BlockStoreWriteSeconds          float64        `json:"blockstore_write_seconds,omitempty"`
+	BlockStoreWriteCount            int            `json:"blockstore_write_count,omitempty"`
+	BlockStoreWriteAvgSeconds       float64        `json:"blockstore_write_avg_seconds,omitempty"`
+	TxIndexWriteSeconds             float64        `json:"tx_index_write_seconds,omitempty"`
+	TxIndexWriteCount               int            `json:"tx_index_write_count,omitempty"`
+	TxIndexWriteAvgSeconds          float64        `json:"tx_index_write_avg_seconds,omitempty"`
+	TxIndexIndexedTxsDelta          float64        `json:"tx_index_indexed_txs_delta,omitempty"`
 	ConsensusBlockIntervalSeconds   float64        `json:"consensus_block_interval_seconds,omitempty"`
 	ConsensusBlockIntervalCount     int            `json:"consensus_block_interval_count,omitempty"`
 	ConsensusTotalTxsDelta          float64        `json:"consensus_total_txs_delta,omitempty"`
@@ -300,6 +312,7 @@ type storageSignal struct {
 	ApplicationDBBytesDelta         int64          `json:"application_db_bytes_delta,omitempty"`
 	ModuleTimings                   []moduleTiming `json:"module_timings,omitempty"`
 	ConsensusStepTimings            []cadenceStage `json:"consensus_step_timings,omitempty"`
+	ExactCommitStageTimings         []cadenceStage `json:"exact_commit_stage_timings,omitempty"`
 }
 
 type loadWindowObservation struct {
@@ -445,6 +458,7 @@ type cadenceDiagnostic struct {
 
 type cadenceStage struct {
 	Name               string  `json:"name"`
+	Parent             string  `json:"parent,omitempty"`
 	Class              string  `json:"class,omitempty"`
 	Source             string  `json:"source,omitempty"`
 	Provenance         string  `json:"provenance,omitempty"`
@@ -837,6 +851,7 @@ func main() {
 		cosmosTxs                   = flag.Int("cosmos-txs", 200, "Cosmos transactions per block")
 		cosmosMaxGas                = flag.Int64("cosmos-max-gas", 75_000_000, "Cosmos consensus block max gas")
 		cosmosRecipients            = flag.Int("cosmos-recipients", 20, "Cosmos MsgMultiSend recipients")
+		txIndexer                   = flag.String("tx-indexer", "kv", "CometBFT transaction indexer for full-stack simapp scenarios: kv or null")
 		validators                  = flag.Uint64("validators", 1, "Docker validator count")
 		nodes                       = flag.Uint64("nodes", 1, "Docker full node count")
 		wallets                     = flag.Int("wallets", 5000, "wallets funded in genesis and exposed to Catalyst")
@@ -875,6 +890,9 @@ func main() {
 		celestiaDryRun              = flag.Bool("celestia-dry-run", false, "for celestia-sync-ab, write env files and artifact metadata without executing the sync")
 	)
 	flag.Parse()
+	if *txIndexer != "kv" && *txIndexer != "null" {
+		fatalf("-tx-indexer must be kv or null, got %q", *txIndexer)
+	}
 	if *loadWindowTargetFraction <= 0 || *loadWindowTargetFraction > 1 {
 		fatalf("-load-window-target-fraction must be > 0 and <= 1, got %v", *loadWindowTargetFraction)
 	}
@@ -954,8 +972,8 @@ func main() {
 		evmBlogScenario(*validators, *nodes, *wallets, *evmBlocks, *evmBatches, *evmMsgs, *evmMsgType, *evmSendInterval, *evmInitialWallets, *evmInitialContracts, *evmIterations, *evmCalldataSize, *evmGasFeeCap, *evmGasTipCap, *catalyst),
 		simappScenario("simapp-goleveldb", "SDK simapp with goleveldb app state", "goleveldb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst),
 		simappScenario("simapp-treedb", "SDK simapp with TreeDB app state", "treedb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst),
-		simappFullStackScenario("simapp-goleveldb-all", "SDK simapp with goleveldb app state and CometBFT node DBs", "goleveldb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst),
-		simappFullStackScenario("simapp-treedb-all", "SDK simapp with TreeDB app state and CometBFT node DBs", "treedb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst),
+		simappFullStackScenario("simapp-goleveldb-all", "SDK simapp with goleveldb app state and CometBFT node DBs", "goleveldb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst, *txIndexer),
+		simappFullStackScenario("simapp-treedb-all", "SDK simapp with TreeDB app state and CometBFT node DBs", "treedb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst, *txIndexer),
 		celestiaSyncScenario(celestiaConfig),
 	}
 	selectedScenarios := selectScenarios(allScenarios, *scenarioFlag)
@@ -1301,12 +1319,14 @@ func makePreseedConfig(profile string, accounts, activeWallets int) preseedConfi
 const (
 	simappCosmosDBVersion = "v0.0.0-20260701184343-6ddcb75557e5"
 	simappCosmosDBRef     = "6ddcb75557e59bc4e6668ac7699cd52b63b3e402"
-	simappGomapVersion    = "v0.6.2-0.20260708213404-2182e84bd668"
-	simappGomapRef        = "2182e84bd668f6ea610726717d90e09a86a17a32"
+	simappGomapVersion    = "v0.6.2-0.20260709230517-9cd9c6874860"
+	simappGomapRef        = "9cd9c6874860d2988002701bef042e50ba142cd0"
 	simappIAVLVersion     = "v0.0.0-20260701072929-12a26715119b"
 	simappIAVLRef         = "12a26715119bb3ea55289ffd7b256161effc7b8b"
 	simappCometDBVersion  = "v0.0.0-20260701074104-b4f87847a725"
 	simappCometDBRef      = "b4f87847a725f92a046d927ce4a0f5b08b965995"
+	simappCometBFTVersion = "87379c903cc82c03874b24a6e3f9045784ba4681"
+	simappCometBFTRef     = "87379c903cc82c03874b24a6e3f9045784ba4681"
 )
 
 func simappDependencyPins(includeCometDB bool) []dependencyPin {
@@ -1328,11 +1348,18 @@ func simappDependencyPins(includeCometDB bool) []dependencyPin {
 		},
 	}
 	if includeCometDB {
-		pins = append(pins, dependencyPin{
-			Module:  "github.com/cometbft/cometbft-db",
-			Version: simappCometDBVersion,
-			Ref:     simappCometDBRef,
-		})
+		pins = append(pins,
+			dependencyPin{
+				Module:  "github.com/cometbft/cometbft-db",
+				Version: simappCometDBVersion,
+				Ref:     simappCometDBRef,
+			},
+			dependencyPin{
+				Module:  "github.com/cometbft/cometbft",
+				Version: simappCometBFTVersion,
+				Ref:     simappCometBFTRef,
+			},
+		)
 	}
 	return pins
 }
@@ -1344,20 +1371,23 @@ func simappReplaceCmd(includeCometDB bool) string {
 		"github.com/cosmos/iavl=github.com/snissn/iavl@" + simappIAVLVersion,
 	}
 	if includeCometDB {
-		cmds = append(cmds, "github.com/cometbft/cometbft-db=github.com/snissn/cometbft-db@"+simappCometDBVersion)
+		cmds = append(cmds,
+			"github.com/cometbft/cometbft-db=github.com/snissn/cometbft-db@"+simappCometDBVersion,
+			"github.com/cometbft/cometbft=github.com/snissn/cometbft@"+simappCometBFTVersion,
+		)
 	}
 	return strings.Join(cmds, " ")
 }
 
 func simappScenario(name, desc, backend string, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst string) scenario {
-	return simappScenarioWithBackends(name, desc, backend, "", false, validators, nodes, wallets, preseed, blocks, txs, cosmosMsg, containedMsg, msgsPerTx, recipients, maxGas, catalyst)
+	return simappScenarioWithBackends(name, desc, backend, "", "", false, validators, nodes, wallets, preseed, blocks, txs, cosmosMsg, containedMsg, msgsPerTx, recipients, maxGas, catalyst)
 }
 
-func simappFullStackScenario(name, desc, backend string, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst string) scenario {
-	return simappScenarioWithBackends(name, desc, backend, backend, true, validators, nodes, wallets, preseed, blocks, txs, cosmosMsg, containedMsg, msgsPerTx, recipients, maxGas, catalyst)
+func simappFullStackScenario(name, desc, backend string, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst, txIndexer string) scenario {
+	return simappScenarioWithBackends(name, desc, backend, backend, txIndexer, true, validators, nodes, wallets, preseed, blocks, txs, cosmosMsg, containedMsg, msgsPerTx, recipients, maxGas, catalyst)
 }
 
-func simappScenarioWithBackends(name, desc, appBackend, nodeBackend string, includeCometDB bool, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst string) scenario {
+func simappScenarioWithBackends(name, desc, appBackend, nodeBackend, txIndexer string, includeCometDB bool, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst string) scenario {
 	appConfig := map[string]interface{}{}
 	if appBackend != "" {
 		appConfig["app-db-backend"] = appBackend
@@ -1365,6 +1395,9 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend string, incl
 	consensusConfig := lowLatencyConsensusConfig()
 	if nodeBackend != "" {
 		consensusConfig["db_backend"] = nodeBackend
+	}
+	if txIndexer != "" {
+		consensusConfig["tx_index"] = map[string]interface{}{"indexer": txIndexer}
 	}
 	loadMsgs := []ctlt.LoadTestMsg{{Weight: 1, Type: ctlt.MsgType(cosmosMsg)}}
 	if cosmosMsg == "MsgMultiSend" {
@@ -1396,6 +1429,7 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend string, incl
 		CatalystVersion: catalyst,
 		AppDBBackend:    appBackend,
 		NodeDBBackend:   nodeBackend,
+		TxIndexer:       txIndexer,
 		Genesis: []chain.GenesisKV{
 			{Key: "consensus.params.block.max_gas", Value: strconv.FormatInt(maxGas, 10)},
 		},
@@ -1415,9 +1449,9 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend string, incl
 
 func simappImageTag(includeCometDB bool) string {
 	if includeCometDB {
-		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-2182e84"
+		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-9cd9c68-comet-87379c9"
 	}
-	return "ironbird-report:snissn-sdk-4948247-cosmosdb-6ddcb75-gomap-2182e84"
+	return "ironbird-report:snissn-sdk-4948247-cosmosdb-6ddcb75-gomap-9cd9c68"
 }
 
 func celestiaSyncScenario(cfg celestiaSyncConfig) scenario {
@@ -1441,6 +1475,19 @@ func launchGenesisAccounts(sc scenario) int {
 	return sc.NumWallets
 }
 
+func rawTxAuditDecision(sc scenario, requested bool) (bool, string) {
+	if sc.IsEVMChain {
+		return false, ""
+	}
+	if !requested {
+		return false, "disabled by -raw-tx-audit=false"
+	}
+	if sc.TxIndexer == "null" {
+		return false, "disabled because tx_index.indexer=null does not support CometBFT /tx queries"
+	}
+	return true, ""
+}
+
 func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, skipBuild, keep bool, commitBenchBlocks uint64, appProfiles appProfileCaptureConfig, rawTxAudit bool, loadWindowDrainTimeout, loadWindowMinDuration time.Duration, loadWindowTargetFraction float64, stopCatalystAfterLoadWindow bool, treeDBStatsSampleInterval, treeDBPostLoadDwell time.Duration) (result runResult) {
 	result.Scenario = sc
 	result.StartedAt = time.Now()
@@ -1451,7 +1498,7 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 		if result.LoadWindow != nil {
 			result.LoadWindow.PhaseOverlaps = summarizeLoadWindowPhaseOverlaps(result.PhaseTimeline, *result.LoadWindow)
 		}
-		if result.LoadTestResult.Overall.TotalTransactions != 0 || result.RawTxSummary != nil || result.CorrectedLoadTest != nil {
+		if result.LoadTestResult.Overall.TotalTransactions != 0 || usableRawTxSummary(result) != nil || result.CorrectedLoadTest != nil {
 			result.Derived = deriveMetrics(sc, result)
 		}
 		result.RuntimeBreakdown = summarizeRuntimeBreakdown(result)
@@ -1687,17 +1734,22 @@ func runScenario(ctx context.Context, config types.WorkerConfig, sc scenario, sk
 		result.TreeDBDwellSnapshots = collectTreeDBDwellSnapshots(ctx, result.ProviderName, sc, result.TreeDBStatsAfter, result.DataSizesAfter, treeDBPostLoadDwell)
 		endPhase()
 	}
-	preAuditProfileRequests, postAuditProfileRequests := splitAppProfileRequestsForRawTxAudit(appProfileRequests(sc, appProfiles))
+	runRawTxAudit, rawTxAuditSkipReason := rawTxAuditDecision(sc, rawTxAudit)
+	profileRequests := appProfileRequests(sc, appProfiles)
+	preAuditProfileRequests, postAuditProfileRequests := profileRequests, []appProfileRequest(nil)
+	if runRawTxAudit {
+		preAuditProfileRequests, postAuditProfileRequests = splitAppProfileRequestsForRawTxAudit(profileRequests)
+	}
 	endPhase = startPhase(&result, "collect_app_profiles", "")
 	result.ProfileArtifacts = append(result.ProfileArtifacts, collectAppProfileRequests(ctx, launchResp.ProviderState, launchResp.ChainState, sc, preAuditProfileRequests)...)
 	endPhase()
-	if !sc.IsEVMChain && rawTxAudit {
+	if runRawTxAudit {
 		endPhase = startPhase(&result, "raw_tx_audit", "")
 		result.RawTxAudit = auditRawTxs(ctx, result.ProviderName, sc.ChainName, loadResp.TaskLogs, loadResp.Result)
 		result.RawTxSummary = summarizeTxAudit(result.RawTxAudit, loadResp.Result.Overall.Runtime)
 		endPhase()
-	} else if !sc.IsEVMChain {
-		result.RawTxAuditSkipped = "disabled by -raw-tx-audit=false"
+	} else if rawTxAuditSkipReason != "" {
+		result.RawTxAuditSkipped = rawTxAuditSkipReason
 	}
 	if len(postAuditProfileRequests) != 0 {
 		endPhase = startPhase(&result, "collect_app_cpu_profile", "")
@@ -3086,6 +3138,7 @@ func verifySimappBackends(ctx context.Context, providerState, chainState []byte,
 	verification := backendVerification{
 		ExpectedAppDBBackend:  sc.AppDBBackend,
 		ExpectedNodeDBBackend: sc.NodeDBBackend,
+		ExpectedTxIndexer:     sc.TxIndexer,
 		AppConfigPath:         "config/app.toml",
 		NodeConfigPath:        "config/config.toml",
 	}
@@ -3106,6 +3159,7 @@ func verifySimappBackends(ctx context.Context, providerState, chainState []byte,
 	}
 	verification.ObservedAppDBBackend = tomlString(appConfig, "app-db-backend")
 	verification.ObservedNodeDBBackend = tomlString(nodeConfig, "db_backend")
+	verification.ObservedTxIndexer = tomlNestedString(nodeConfig, "tx_index", "indexer")
 	verification.Valid, verification.Error = validateBackendVerification(verification)
 	return verification
 }
@@ -3164,6 +3218,14 @@ func tomlString(cfg map[string]interface{}, key string) string {
 	}
 }
 
+func tomlNestedString(cfg map[string]interface{}, section, key string) string {
+	nested, ok := cfg[section].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	return tomlString(nested, key)
+}
+
 func validateBackendVerification(verification backendVerification) (bool, string) {
 	var problems []string
 	if verification.ExpectedAppDBBackend != "" && verification.ObservedAppDBBackend != verification.ExpectedAppDBBackend {
@@ -3171,6 +3233,9 @@ func validateBackendVerification(verification backendVerification) (bool, string
 	}
 	if verification.ExpectedNodeDBBackend != "" && verification.ObservedNodeDBBackend != verification.ExpectedNodeDBBackend {
 		problems = append(problems, fmt.Sprintf("db_backend observed %q, want %q", verification.ObservedNodeDBBackend, verification.ExpectedNodeDBBackend))
+	}
+	if verification.ExpectedTxIndexer != "" && verification.ObservedTxIndexer != verification.ExpectedTxIndexer {
+		problems = append(problems, fmt.Sprintf("tx_index.indexer observed %q, want %q", verification.ObservedTxIndexer, verification.ExpectedTxIndexer))
 	}
 	if len(problems) > 0 {
 		return false, strings.Join(problems, "; ")
@@ -3972,6 +4037,23 @@ func summarizeStorageSignals(before, after []metricSnapshot, beforeSizes, afterS
 		}
 		signal.StateBlockProcessingSumRaw = metricDelta(deltas, "cometbft_state_block_processing_time_sum")
 		signal.StateBlockProcessingCount = int(metricDelta(deltas, "cometbft_state_block_processing_time_count"))
+		// CometBFT v0.38 observes state block-processing time in milliseconds.
+		signal.StateBlockProcessingSeconds = signal.StateBlockProcessingSumRaw / 1000
+		if signal.StateBlockProcessingCount > 0 {
+			signal.StateBlockProcessingAvgSeconds = signal.StateBlockProcessingSeconds / float64(signal.StateBlockProcessingCount)
+		}
+		signal.ExactCommitStageTimings = summarizeExactCommitStageTimings(deltas)
+		signal.BlockStoreWriteSeconds = metricDelta(deltas, "cometbft_consensus_commit_block_store_seconds_sum")
+		signal.BlockStoreWriteCount = int(metricDelta(deltas, "cometbft_consensus_commit_block_store_seconds_count"))
+		if signal.BlockStoreWriteCount > 0 {
+			signal.BlockStoreWriteAvgSeconds = signal.BlockStoreWriteSeconds / float64(signal.BlockStoreWriteCount)
+		}
+		signal.TxIndexWriteSeconds = metricDelta(deltas, "cometbft_tx_indexer_tx_index_seconds_sum")
+		signal.TxIndexWriteCount = int(metricDelta(deltas, "cometbft_tx_indexer_tx_index_seconds_count"))
+		if signal.TxIndexWriteCount > 0 {
+			signal.TxIndexWriteAvgSeconds = signal.TxIndexWriteSeconds / float64(signal.TxIndexWriteCount)
+		}
+		signal.TxIndexIndexedTxsDelta = metricDelta(deltas, "cometbft_tx_indexer_indexed_txs_total")
 		signal.ConsensusBlockIntervalSeconds = metricDelta(deltas, "cometbft_consensus_block_interval_seconds_sum")
 		signal.ConsensusBlockIntervalCount = int(metricDelta(deltas, "cometbft_consensus_block_interval_seconds_count"))
 		signal.ConsensusTotalTxsDelta = metricDelta(deltas, "cometbft_consensus_total_txs")
@@ -3989,6 +4071,69 @@ func summarizeStorageSignals(before, after []metricSnapshot, beforeSizes, afterS
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+type exactCommitMetricSpec struct {
+	Name   string
+	Parent string
+	Class  string
+	Metric string
+	Note   string
+}
+
+var exactCommitMetricSpecs = []exactCommitMetricSpec{
+	{Name: "consensus commit", Class: "consensus_commit", Metric: "cometbft_consensus_commit_finalize_seconds", Note: "full finalizeCommit path before the NewHeight transition completes"},
+	{Name: "commit blockstore", Parent: "consensus commit", Class: "node_db_blockstore", Metric: "cometbft_consensus_commit_block_store_seconds", Note: "synchronous blockstore SaveBlock inside consensus commit"},
+	{Name: "commit blockstore lock", Parent: "consensus commit", Class: "consensus_lock", Metric: "cometbft_consensus_commit_block_store_lock_seconds", Note: "Celestia Core consensus lock reacquisition after SaveBlock"},
+	{Name: "commit consensus WAL", Parent: "consensus commit", Class: "consensus_wal", Metric: "cometbft_consensus_commit_consensus_wal_seconds", Note: "synchronous end-height consensus WAL record"},
+	{Name: "commit apply block", Parent: "consensus commit", Class: "block_execution", Metric: "cometbft_consensus_commit_apply_block_seconds", Note: "state executor ApplyVerifiedBlock call"},
+	{Name: "commit apply block lock", Parent: "consensus commit", Class: "consensus_lock", Metric: "cometbft_consensus_commit_apply_block_lock_seconds", Note: "Celestia Core consensus lock reacquisition after ApplyVerifiedBlock"},
+	{Name: "commit record metrics", Parent: "consensus commit", Class: "consensus_bookkeeping", Metric: "cometbft_consensus_commit_record_metrics_seconds", Note: "post-commit consensus metric recording"},
+	{Name: "commit update consensus state", Parent: "consensus commit", Class: "consensus_bookkeeping", Metric: "cometbft_consensus_commit_update_state_seconds", Note: "transition to the next consensus NewHeight state"},
+	{Name: "state apply block", Parent: "commit apply block", Class: "block_execution", Metric: "cometbft_state_apply_block_seconds", Note: "complete state executor ApplyVerifiedBlock path"},
+	{Name: "state finalize block", Parent: "state apply block", Class: "abci_block_execution", Metric: "cometbft_state_finalize_block_seconds", Note: "FinalizeBlock call through the consensus ABCI connection"},
+	{Name: "state save finalize response", Parent: "state apply block", Class: "state_persistence", Metric: "cometbft_state_save_finalize_block_response_seconds", Note: "persist FinalizeBlock response"},
+	{Name: "state save tx info", Parent: "state apply block", Class: "node_db_blockstore", Metric: "cometbft_state_save_tx_info_seconds", Note: "persist Celestia per-transaction blockstore lookup records with one synchronous batch per block"},
+	{Name: "state update", Parent: "state apply block", Class: "state_transition", Metric: "cometbft_state_update_state_seconds", Note: "derive the next in-memory consensus state"},
+	{Name: "state block commit", Parent: "state apply block", Class: "app_commit", Metric: "cometbft_state_block_commit_seconds", Note: "BlockExecutor.Commit including mempool synchronization"},
+	{Name: "mempool lock wait", Parent: "state block commit", Class: "mempool_contention", Metric: "cometbft_state_mempool_lock_wait_seconds", Note: "time waiting to acquire the mempool lock"},
+	{Name: "mempool lock held", Parent: "state block commit", Class: "mempool_contention", Metric: "cometbft_state_mempool_lock_held_seconds", Note: "inclusive lock hold; overlaps flush, app commit, and mempool update children"},
+	{Name: "flush app connection", Parent: "mempool lock held", Class: "abci_flush", Metric: "cometbft_state_flush_app_conn_seconds", Note: "flush outstanding mempool ABCI requests before app commit"},
+	{Name: "state app commit", Parent: "mempool lock held", Class: "abci_commit", Metric: "cometbft_state_app_commit_seconds", Note: "ABCI Commit call"},
+	{Name: "mempool update", Parent: "mempool lock held", Class: "mempool_update", Metric: "cometbft_state_mempool_update_seconds", Note: "mempool update after app commit"},
+	{Name: "evidence update", Parent: "state apply block", Class: "evidence", Metric: "cometbft_state_evidence_update_seconds", Note: "evidence pool update after app commit"},
+	{Name: "state save", Parent: "state apply block", Class: "node_db_state", Metric: "cometbft_state_state_save_seconds", Note: "persist post-commit consensus state"},
+	{Name: "fire events", Parent: "state apply block", Class: "event_delivery", Metric: "cometbft_state_fire_events_seconds", Note: "publish block and transaction events; unbuffered subscribers can apply backpressure"},
+	{Name: "tx index block total", Class: "async_tx_index", Metric: "cometbft_tx_indexer_block_total_seconds", Note: "asynchronous end-to-end indexing for one block; not an additive consensus-commit child"},
+	{Name: "tx index gather events", Parent: "tx index block total", Class: "async_tx_index", Metric: "cometbft_tx_indexer_gather_events_seconds", Note: "receive all block transaction events"},
+	{Name: "tx index block write", Parent: "tx index block total", Class: "node_db_tx_index", Metric: "cometbft_tx_indexer_block_index_seconds", Note: "write one block to the block index"},
+	{Name: "tx index tx write", Parent: "tx index block total", Class: "node_db_tx_index", Metric: "cometbft_tx_indexer_tx_index_seconds", Note: "write one transaction batch to the transaction index"},
+}
+
+func summarizeExactCommitStageTimings(deltas map[string]float64) []cadenceStage {
+	var stages []cadenceStage
+	for _, spec := range exactCommitMetricSpecs {
+		seconds := sumMetricDeltas(deltas, spec.Metric+"_sum")
+		count := int(sumMetricDeltas(deltas, spec.Metric+"_count"))
+		if seconds == 0 && count == 0 {
+			continue
+		}
+		stage := cadenceStage{
+			Name:       spec.Name,
+			Parent:     spec.Parent,
+			Class:      spec.Class,
+			Source:     spec.Metric,
+			Provenance: "exact_prometheus_span_delta",
+			Seconds:    seconds,
+			Count:      count,
+			Note:       spec.Note,
+		}
+		if count > 0 {
+			stage.AvgSeconds = seconds / float64(count)
+		}
+		stages = append(stages, stage)
+	}
+	return stages
 }
 
 func summarizeModuleTimings(deltas map[string]float64) []moduleTiming {
@@ -4535,8 +4680,8 @@ func summarizeRuntimeBreakdown(result runResult) []runtimeBreakdown {
 		return nil
 	}
 	workloadRuntime := loadRuntimeSeconds(result)
-	if workloadRuntime == 0 && result.RawTxSummary != nil && result.RawTxSummary.TPS > 0 {
-		workloadRuntime = float64(result.RawTxSummary.Successful) / result.RawTxSummary.TPS
+	if raw := usableRawTxSummary(result); workloadRuntime == 0 && raw != nil && raw.TPS > 0 {
+		workloadRuntime = float64(raw.Successful) / raw.TPS
 	}
 	out := make([]runtimeBreakdown, 0, len(result.StorageSignals))
 	for _, signal := range result.StorageSignals {
@@ -4842,7 +4987,7 @@ func populateLoadWindowCadenceDiagnostics(result *runResult) {
 	if result == nil || result.LoadWindow == nil {
 		return
 	}
-	result.LoadWindow.CadenceDiagnostics = summarizeCadenceDiagnostics(*result.LoadWindow)
+	result.LoadWindow.CadenceDiagnostics = summarizeCadenceDiagnostics(*result.LoadWindow, result.LoadTestLogSummary)
 }
 
 func populateLoadWindowAccounting(result *runResult) {
@@ -4852,7 +4997,7 @@ func populateLoadWindowAccounting(result *runResult) {
 	result.LoadWindow.Accounting = summarizeLoadWindowAccounting(*result, *result.LoadWindow)
 }
 
-func summarizeCadenceDiagnostics(obs loadWindowObservation) []cadenceDiagnostic {
+func summarizeCadenceDiagnostics(obs loadWindowObservation, logs loadTestLogSummary) []cadenceDiagnostic {
 	if len(obs.StorageSignals) == 0 {
 		return nil
 	}
@@ -4867,22 +5012,22 @@ func summarizeCadenceDiagnostics(obs loadWindowObservation) []cadenceDiagnostic 
 			Name:                   signal.Name,
 			WindowSeconds:          obs.Seconds,
 			ResidualFormula:        "max(0, avg_block_interval_seconds - (commit + finalize_block + prepare_proposal + process_proposal seconds per block))",
-			ExactEventSpanCoverage: false,
-			MissingEventSpans: []string{
-				"DB adapter WriteSync / command-WAL / value-log / checkpoint spans are not exported as event-level load-window spans",
-				"CometBFT CAT mempool lock wait and lock hold spans are only visible in sampled block/mutex profiles",
-				"local BroadcastTxSync wait is not exported by Catalyst aggregate logs",
-				"blockstore and tx-index write spans are not separated from CometBFT state/block processing counters",
-			},
+			ExactEventSpanCoverage: hasExactCommitSpanCoverage(signal),
+			MissingEventSpans:      cadenceMissingEventSpans(signal, obs.TreeDBStatDeltas, logs),
 			Notes: []string{
-				"block-stage residual is derived from Prometheus counter deltas, not exact event-level wall-clock tracing",
+				"block-stage residual is derived from ABCI Prometheus counter deltas, not exact event-level wall-clock tracing",
 				"CheckTx is reported as transaction-intake pressure and is not subtracted from block-stage residual",
+				"exact CometBFT commit spans are nested; compare siblings under the same parent and do not add parent and child rows",
+				"the asynchronous tx-index block total is not an additive child of consensus commit, but fire-events can expose subscriber backpressure",
 			},
 		}
 		row.BlockCount = cadenceBlockCount(signal, pipeline)
-		row.AvgBlockIntervalSeconds = cadenceAvgBlockInterval(signal, pipeline, row.BlockCount)
+		row.AvgBlockIntervalSeconds = cadenceAvgBlockInterval(obs.Seconds, row.BlockCount, pipeline)
 		row.AvgTxsPerBlock = cadenceAvgTxsPerBlock(obs, signal, pipeline, row.BlockCount)
 		row.Stages = cadenceStages(signal, row.BlockCount)
+		row.Stages = append(row.Stages, metricAttributionCadenceStages(signal, row.BlockCount)...)
+		row.Stages = append(row.Stages, treeDBCadenceStages(obs.TreeDBStatDeltas, signal.Name, row.BlockCount)...)
+		row.Stages = append(row.Stages, catalystCadenceStages(logs.CatalystTiming, row.BlockCount)...)
 		for _, stage := range row.Stages {
 			if stage.IncludedInResidual {
 				row.ABCIBlockStageSecondsPerBlock += stage.PerBlockSeconds
@@ -4910,31 +5055,120 @@ func summarizeCadenceDiagnostics(obs loadWindowObservation) []cadenceDiagnostic 
 		} else {
 			row.MissingEventSpans = append(row.MissingEventSpans, "CometBFT consensus step duration counters unavailable in accepted-window metrics")
 		}
+		if hasTreeDBStatsForNode(obs.TreeDBStatDeltas, signal.Name) {
+			row.Notes = append(row.Notes, "TreeDB debug-var timing deltas expose commit/storage internals, but they are counters and may overlap ABCI, blockstore, or tx-index timing")
+		}
+		if logs.CatalystTiming != nil {
+			row.Notes = append(row.Notes, "Catalyst timing rows are retained task-log spans at run scope; truncated logs can undercount them")
+		}
 		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	return rows
 }
 
+func cadenceMissingEventSpans(signal storageSignal, treedbDeltas []treeDBStatsDelta, logs loadTestLogSummary) []string {
+	var missing []string
+	if hasTreeDBStatsForNode(treedbDeltas, signal.Name) {
+		missing = append(missing, "DB adapter exact start/end spans remain unavailable; TreeDB debug-var deltas provide overlapping timing attribution only")
+	} else {
+		missing = append(missing, "DB adapter WriteSync / command-WAL / value-log / checkpoint timing unavailable; TreeDB debug vars were not collected for this node")
+	}
+	if !hasExactStage(signal.ExactCommitStageTimings, "mempool lock wait") || !hasExactStage(signal.ExactCommitStageTimings, "mempool lock held") {
+		missing = append(missing, "CometBFT mempool lock wait and lock hold spans unavailable")
+	}
+	if logs.CatalystTiming == nil || logs.CatalystTiming.SendDurations == nil || logs.CatalystTiming.SendDurations.Count == 0 {
+		missing = append(missing, "local broadcast admission spans unavailable from retained Catalyst logs")
+	} else {
+		missing = append(missing, "per-transaction BroadcastTxSync wait and inclusion latency unavailable; retained Catalyst send spans are block-level aggregates")
+	}
+	if signal.BlockStoreWriteSeconds == 0 && !hasTreeDBTimingForStore(treedbDeltas, signal.Name, "blockstore.db") {
+		missing = append(missing, "blockstore write timing spans unavailable; state/block-processing counters may include this work")
+	}
+	if signal.TxIndexWriteSeconds == 0 && !hasTreeDBTimingForStore(treedbDeltas, signal.Name, "tx_index.db") {
+		if signal.TxIndexIndexedTxsDelta > 0 {
+			missing = append(missing, "tx-index write timing spans unavailable; only indexed transaction counts were exported")
+		} else {
+			missing = append(missing, "tx-index write timing spans unavailable")
+		}
+	}
+	return missing
+}
+
+func hasExactCommitSpanCoverage(signal storageSignal) bool {
+	for _, name := range []string{
+		"consensus commit",
+		"commit blockstore",
+		"commit blockstore lock",
+		"commit consensus WAL",
+		"commit apply block",
+		"commit apply block lock",
+		"commit record metrics",
+		"commit update consensus state",
+	} {
+		if !hasExactStage(signal.ExactCommitStageTimings, name) {
+			return false
+		}
+	}
+	return true
+}
+
+func hasExactStage(stages []cadenceStage, name string) bool {
+	for _, stage := range stages {
+		if stage.Name == name && (stage.Seconds != 0 || stage.Count != 0) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTreeDBStatsForNode(snapshots []treeDBStatsDelta, node string) bool {
+	for _, snapshot := range snapshots {
+		if snapshot.Name == node && len(snapshot.Metrics) > 0 && snapshot.Error == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTreeDBTimingForStore(snapshots []treeDBStatsDelta, node, store string) bool {
+	for _, snapshot := range snapshots {
+		if snapshot.Name != node || snapshot.Store != store || snapshot.Error != "" {
+			continue
+		}
+		for metric, values := range snapshot.Metrics {
+			seconds, ok := treeDBMetricDeltaSeconds(metric, values.Delta)
+			if ok && seconds != 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func cadenceBlockCount(signal storageSignal, pipeline pipelineSignal) int {
 	switch {
+	case signal.ABCIFinalizeBlockCount > 0:
+		return signal.ABCIFinalizeBlockCount
+	case signal.ABCICommitCount > 0:
+		return signal.ABCICommitCount
+	case pipeline.ABCIFinalizeBlockCount > 0:
+		return pipeline.ABCIFinalizeBlockCount
+	case pipeline.ABCICommitCount > 0:
+		return pipeline.ABCICommitCount
 	case signal.ConsensusBlockIntervalCount > 0:
 		return signal.ConsensusBlockIntervalCount
 	case pipeline.ConsensusBlockIntervalCount > 0:
 		return pipeline.ConsensusBlockIntervalCount
-	case signal.ABCICommitCount > 0:
-		return signal.ABCICommitCount
-	case signal.ABCIFinalizeBlockCount > 0:
-		return signal.ABCIFinalizeBlockCount
 	default:
 		return 0
 	}
 }
 
-func cadenceAvgBlockInterval(signal storageSignal, pipeline pipelineSignal, blockCount int) float64 {
+func cadenceAvgBlockInterval(windowSeconds float64, blockCount int, pipeline pipelineSignal) float64 {
 	switch {
-	case blockCount > 0 && signal.ConsensusBlockIntervalSeconds > 0:
-		return signal.ConsensusBlockIntervalSeconds / float64(blockCount)
+	case windowSeconds > 0 && blockCount > 0:
+		return windowSeconds / float64(blockCount)
 	case pipeline.AvgBlockIntervalSeconds > 0:
 		return pipeline.AvgBlockIntervalSeconds
 	default:
@@ -5000,6 +5234,159 @@ func abciCadenceStage(name string, seconds float64, count, blockCount int, inclu
 	return stage
 }
 
+func metricAttributionCadenceStages(signal storageSignal, blockCount int) []cadenceStage {
+	var stages []cadenceStage
+	if signal.StateBlockProcessingSeconds != 0 || signal.StateBlockProcessingCount != 0 {
+		stages = append(stages, newCadenceStage(
+			"state block processing",
+			"block_execution_cadence",
+			"cometbft_state_block_processing_time",
+			"prometheus_counter_delta",
+			signal.StateBlockProcessingSeconds,
+			signal.StateBlockProcessingCount,
+			blockCount,
+			false,
+			"CometBFT state block-processing counter; may include block execution, blockstore, tx-index, and consensus bookkeeping",
+		))
+	}
+	for _, exact := range signal.ExactCommitStageTimings {
+		if blockCount > 0 {
+			exact.PerBlockSeconds = exact.Seconds / float64(blockCount)
+		} else if exact.Seconds > 0 {
+			exact.MissingReason = "block count unavailable"
+		}
+		stages = append(stages, exact)
+	}
+	if signal.TxIndexIndexedTxsDelta != 0 {
+		stages = append(stages, newCadenceStage(
+			"tx-index indexed txs",
+			"node_db_tx_index",
+			"tx_index_indexed_txs_total",
+			"prometheus_counter_delta",
+			0,
+			int(signal.TxIndexIndexedTxsDelta),
+			blockCount,
+			false,
+			"count-only tx-index signal; timing is reported separately only when tx-index duration metrics exist",
+		))
+	}
+	if signal.MempoolSuccessfulTxsDelta != 0 {
+		stages = append(stages, newCadenceStage(
+			"mempool successful txs",
+			"local_broadcast_admission",
+			"cometbft_mempool_successful_txs",
+			"prometheus_counter_delta",
+			0,
+			int(signal.MempoolSuccessfulTxsDelta),
+			blockCount,
+			false,
+			"count-only CAT/local-admission signal; lock wait and per-transaction broadcast wait are not exposed here",
+		))
+	}
+	return stages
+}
+
+func treeDBCadenceStages(snapshots []treeDBStatsDelta, node string, blockCount int) []cadenceStage {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	var filtered []treeDBStatsDelta
+	for _, snapshot := range snapshots {
+		if snapshot.Name == node {
+			filtered = append(filtered, snapshot)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	rows := treeDBTimingSummaryRows(filtered)
+	stages := make([]cadenceStage, 0, len(rows))
+	for _, row := range rows {
+		stages = append(stages, newCadenceStage(
+			"treedb "+row.Store+" "+row.Group,
+			treeDBCadenceStageClass(row),
+			"treedb_debug_vars",
+			"treedb_debug_vars_delta",
+			row.Seconds,
+			0,
+			blockCount,
+			false,
+			"TreeDB timing counter delta for "+row.Store+"; may overlap ABCI commit/finalize, blockstore, or tx-index stages",
+		))
+	}
+	return stages
+}
+
+func treeDBCadenceStageClass(row treeDBTimingSummaryRow) string {
+	switch row.Store {
+	case "blockstore.db":
+		return "node_db_blockstore"
+	case "tx_index.db":
+		return "node_db_tx_index"
+	case "state.db", "evidence.db":
+		return "node_db_" + strings.TrimSuffix(row.Store, ".db")
+	}
+	switch row.Group {
+	case "public batch WriteSync", "public batch Write", "public checkpoint", "command WAL", "checkpoint", "flush/apply", "value log", "foreground wait":
+		return "db_adapter_commit_internal"
+	default:
+		return "db_adapter_internal"
+	}
+}
+
+func catalystCadenceStages(timing *catalystLogTiming, blockCount int) []cadenceStage {
+	if timing == nil {
+		return nil
+	}
+	var stages []cadenceStage
+	add := func(name, class string, stats *durationStats, note string) {
+		if stats == nil || (stats.TotalSeconds == 0 && stats.Count == 0) {
+			return
+		}
+		if timing.LogTruncated {
+			note += "; task logs were truncated, so counts and totals cover retained log lines only"
+		}
+		stages = append(stages, newCadenceStage(
+			name,
+			class,
+			"retained Catalyst task logs",
+			"retained_catalyst_log_span",
+			stats.TotalSeconds,
+			stats.Count,
+			blockCount,
+			false,
+			note,
+		))
+	}
+	add("catalyst send transactions", "local_broadcast_admission", timing.SendDurations, "block-level send span from retained Catalyst logs; not per-transaction RPC wait")
+	add("catalyst block event to processing", "block_execution_cadence", timing.BlockEventToProcessingDurations, "retained log span from new-block event to Catalyst processing start")
+	add("catalyst block processing to processed", "block_execution_cadence", timing.BlockProcessingToProcessedDurations, "retained log span from Catalyst block processing start to completion")
+	add("catalyst chain timestamp to processing", "block_execution_cadence", timing.ChainTimestampToProcessingDurations, "block timestamp to local Catalyst processing lag; cadence signal, not a local execution duration")
+	return stages
+}
+
+func newCadenceStage(name, class, source, provenance string, seconds float64, count, blockCount int, included bool, note string) cadenceStage {
+	stage := cadenceStage{
+		Name:               name,
+		Class:              class,
+		Source:             source,
+		Provenance:         provenance,
+		Seconds:            seconds,
+		Count:              count,
+		IncludedInResidual: included,
+		Note:               note,
+	}
+	if count > 0 && seconds > 0 {
+		stage.AvgSeconds = seconds / float64(count)
+	}
+	if blockCount > 0 && seconds > 0 {
+		stage.PerBlockSeconds = seconds / float64(blockCount)
+	} else if seconds > 0 {
+		stage.MissingReason = "block count unavailable"
+	}
+	return stage
+}
+
 func summarizeLoadWindowAccounting(result runResult, obs loadWindowObservation) []loadWindowAccounting {
 	if len(obs.StorageSignals) == 0 {
 		return nil
@@ -5055,15 +5442,18 @@ func summarizeLoadWindowAccounting(result runResult, obs loadWindowObservation) 
 			if row.ABCIIntervalProvenance == "" {
 				row.ABCIIntervalProvenance = "wall_clock_intervals"
 			}
-			abciOverlapSeconds := nonNegative(signal.ABCIObservedSeconds - abciBusyUnionSeconds)
-			row.ABCIOverlapSeconds = &abciOverlapSeconds
 			validatorNonABCIWallSeconds := nonNegative(obs.Seconds - abciBusyUnionSeconds)
 			row.ValidatorNonABCIWallSeconds = &validatorNonABCIWallSeconds
 			row.UnaccountedResidualSeconds = validatorNonABCIWallSeconds
 			row.UnaccountedResidualFormula = "max(0, load_window_seconds - abci_busy_union_seconds)"
-			row.UnaccountedResidualClassification = "interval_union_based"
-			if signal.ABCIObservedSeconds < abciBusyUnionSeconds {
-				row.Notes = append(row.Notes, "ABCI busy union exceeds summed method seconds; interval source may be bounded or broader than method timer sums")
+			if row.ABCIIntervalProvenance == "exact_event" {
+				abciOverlapSeconds := nonNegative(signal.ABCIObservedSeconds - abciBusyUnionSeconds)
+				row.ABCIOverlapSeconds = &abciOverlapSeconds
+				row.UnaccountedResidualClassification = "exact_interval_union"
+			} else {
+				row.ABCIOverlapMissingReason = "ABCI interval union is scrape-bounded rather than event-exact; overlap with summed method timers is not meaningful"
+				row.UnaccountedResidualClassification = "bounded_sample_lower_bound"
+				row.Notes = append(row.Notes, "ABCI activity expands to the full scrape interval; the busy union is an upper bound and interval-derived non-ABCI time is only a lower bound")
 			}
 		} else {
 			row.ABCIBusyUnionMissingReason = "ABCI method interval start/end samples are not exported by this harness"
@@ -5077,8 +5467,10 @@ func summarizeLoadWindowAccounting(result runResult, obs loadWindowObservation) 
 			row.ValidatorCoreEquivalent = signal.ProcessCPUSecondsDelta / obs.Seconds
 			row.ValidatorNonABCIPctApprox = 100 * row.ValidatorNonABCIApproxSeconds / obs.Seconds
 		}
-		if signal.ConsensusBlockIntervalCount > 0 {
-			row.ConsensusBlockCadenceSeconds = signal.ConsensusBlockIntervalSeconds / float64(signal.ConsensusBlockIntervalCount)
+		blockCount := cadenceBlockCount(signal, pipelineByName[signal.Name])
+		if obs.Seconds > 0 && blockCount > 0 {
+			row.ConsensusBlockCadenceSeconds = obs.Seconds / float64(blockCount)
+			row.Notes = append(row.Notes, "block cadence is accepted-window wall time divided by finalized block count; cometbft_consensus_block_interval_seconds measures block-header timestamp deltas instead")
 		}
 		if pipeline, ok := pipelineByName[signal.Name]; ok {
 			row.MempoolBacklogSummary = fmt.Sprintf("submitted=%d included=%d successful=%d send_gap=%d failed_send=%d", pipeline.SubmittedTransactions, pipeline.IncludedTransactions, pipeline.SuccessfulTransactions, pipeline.SubmittedMinusIncluded, pipeline.FailedSendTotal)
@@ -5151,8 +5543,20 @@ func summarizePipelineSignals(obs loadWindowObservation, logs loadTestLogSummary
 			row.AvgCommitSeconds = row.ABCICommitSeconds / float64(row.ABCICommitCount)
 			row.AvgTxsPerCommit = float64(obs.IncludedTransactions) / float64(row.ABCICommitCount)
 		}
-		if row.ConsensusBlockIntervalCount > 0 {
+		blockCount := cadenceBlockCount(signal, row)
+		if obs.Seconds > 0 && blockCount > 0 {
+			row.AvgBlockIntervalSeconds = obs.Seconds / float64(blockCount)
+			row.Notes = append(row.Notes, "average block interval is accepted-window wall time per finalized block; raw consensus interval metrics are block-header timestamp deltas")
+		} else if row.ConsensusBlockIntervalCount > 0 {
 			row.AvgBlockIntervalSeconds = row.ConsensusBlockIntervalSeconds / float64(row.ConsensusBlockIntervalCount)
+			row.Notes = append(row.Notes, "accepted-window wall cadence unavailable; average block interval falls back to block-header timestamp deltas")
+		}
+		switch {
+		case row.ABCIFinalizeBlockCount > 0:
+			row.AvgTxsPerConsensusBlock = signal.ConsensusTotalTxsDelta / float64(row.ABCIFinalizeBlockCount)
+		case row.ABCICommitCount > 0:
+			row.AvgTxsPerConsensusBlock = signal.ConsensusTotalTxsDelta / float64(row.ABCICommitCount)
+		case row.ConsensusBlockIntervalCount > 0:
 			row.AvgTxsPerConsensusBlock = signal.ConsensusTotalTxsDelta / float64(row.ConsensusBlockIntervalCount)
 		}
 		if logs.CatalystTiming != nil {
@@ -5202,7 +5606,8 @@ func parseRunnerOverall(line string) *runnerLogOverall {
 
 func summarizeCorrectedLoadTest(result runResult) *correctedLoadTest {
 	overall := result.LoadTestResult.Overall
-	if overall.TotalTransactions == 0 && result.RawTxSummary == nil && len(result.StorageSignals) == 0 {
+	rawSummary := usableRawTxSummary(result)
+	if overall.TotalTransactions == 0 && rawSummary == nil && len(result.StorageSignals) == 0 {
 		return nil
 	}
 	out := &correctedLoadTest{
@@ -5214,15 +5619,15 @@ func summarizeCorrectedLoadTest(result runResult) *correctedLoadTest {
 		RuntimeSeconds:         overall.Runtime.Seconds(),
 		TPS:                    overall.TPS,
 	}
-	if result.RawTxSummary != nil && result.RawTxSummary.Queried > 0 {
+	if rawSummary != nil && rawSummary.Queried > 0 {
 		out.Source = "raw_tx_audit"
-		out.TotalTransactions = result.RawTxSummary.Queried
-		out.IncludedTransactions = result.RawTxSummary.Found
-		out.SuccessfulTransactions = result.RawTxSummary.Successful
-		out.FailedTransactions = result.RawTxSummary.Failed
-		out.TotalGasUsed = result.RawTxSummary.TotalGasUsed
-		if result.RawTxSummary.TPS > 0 {
-			out.TPS = result.RawTxSummary.TPS
+		out.TotalTransactions = rawSummary.Queried
+		out.IncludedTransactions = rawSummary.Found
+		out.SuccessfulTransactions = rawSummary.Successful
+		out.FailedTransactions = rawSummary.Failed
+		out.TotalGasUsed = rawSummary.TotalGasUsed
+		if rawSummary.TPS > 0 {
+			out.TPS = rawSummary.TPS
 		}
 	} else if included, successful, candidates, ok := appMetricLoadCounts(result.StorageSignals); ok && shouldUseAppMetricLoadCounts(overall, included, successful) {
 		out.Source = "app_metrics"
@@ -5272,6 +5677,13 @@ func summarizeCorrectedLoadTest(result runResult) *correctedLoadTest {
 		out.Notes = append(out.Notes, "catalyst result differs from corrected counts")
 	}
 	return out
+}
+
+func usableRawTxSummary(result runResult) *txAuditSummary {
+	if result.Scenario.TxIndexer == "null" {
+		return nil
+	}
+	return result.RawTxSummary
 }
 
 func shouldUseAppMetricLoadCounts(overall ctlt.OverallStats, included, successful int) bool {
@@ -5422,13 +5834,13 @@ func loadCounts(result runResult) (included, successful int, runtimeSeconds, tps
 		tps = result.CorrectedLoadTest.TPS
 		return included, successful, runtimeSeconds, tps
 	}
-	if result.RawTxSummary != nil {
-		included = result.RawTxSummary.Found
-		successful = result.RawTxSummary.Successful
-		if result.RawTxSummary.TPS > 0 {
-			tps = result.RawTxSummary.TPS
+	if raw := usableRawTxSummary(result); raw != nil {
+		included = raw.Found
+		successful = raw.Successful
+		if raw.TPS > 0 {
+			tps = raw.TPS
 			if runtimeSeconds == 0 && successful > 0 {
-				runtimeSeconds = float64(successful) / result.RawTxSummary.TPS
+				runtimeSeconds = float64(successful) / raw.TPS
 			}
 		}
 	}
@@ -6073,9 +6485,9 @@ func writeLoadWindowAccountingMarkdown(b *strings.Builder, rows []loadWindowAcco
 		return
 	}
 	b.WriteString("### Accepted-Window Non-ABCI Accounting\n\n")
-	b.WriteString("Exact non-ABCI wall time is reported when ABCI interval union data is present. When intervals are unavailable, this table reports the explicit residual formula used for the approximate value.\n\n")
-	b.WriteString("| Node | Window s | Loadgen s | ABCI sum s | ABCI union s | ABCI overlap s | Commit s | Finalize s | CheckTx s | Exact non-ABCI s | Approx non-ABCI s | Approx non-ABCI % | Process CPU s | Core equiv | Block cadence s | Interval source | Missing exact fields | Residual formula |\n")
-	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |\n")
+	b.WriteString("Event-exact intervals produce exact non-ABCI wall time. Scrape-bounded intervals only show that an ABCI counter changed somewhere inside each scrape interval: their ABCI union is an upper bound, so interval-derived non-ABCI time is a lower bound. The sum-based residual remains approximate because ABCI methods can overlap.\n\n")
+	b.WriteString("| Node | Window s | Loadgen s | ABCI sum s | ABCI union s | ABCI overlap s | Commit s | Finalize s | CheckTx s | Interval-derived non-ABCI s | Approx sum residual s | Approx residual % | Process CPU s | Core equiv | Observed block cadence s | Interval source | Residual class | Missing exact fields | Residual formula |\n")
+	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |\n")
 	for _, row := range rows {
 		missing := accountingMissingSummary(row)
 		b.WriteString("| ")
@@ -6110,6 +6522,8 @@ func writeLoadWindowAccountingMarkdown(b *strings.Builder, rows []loadWindowAcco
 		b.WriteString(metricFloat(row.ConsensusBlockCadenceSeconds))
 		b.WriteString(" | ")
 		b.WriteString(mdCell(row.ABCIIntervalProvenance))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(row.UnaccountedResidualClassification))
 		b.WriteString(" | ")
 		b.WriteString(mdCell(missing))
 		b.WriteString(" | ")
@@ -6148,8 +6562,8 @@ func writeCadenceDiagnosticsMarkdown(b *strings.Builder, rows []cadenceDiagnosti
 		return
 	}
 	b.WriteString("### Accepted-Window Cadence Diagnostics\n\n")
-	b.WriteString("The block-stage residual is the average block interval minus measured ABCI block-stage averages: commit, finalize_block, prepare_proposal, and process_proposal. CheckTx is reported separately as transaction-intake pressure and is not subtracted from the block-stage residual.\n\n")
-	b.WriteString("| Node | Blocks | Block interval s | Avg tx/block | ABCI block-stage s/block | CheckTx equiv s/block | Consensus step s/block | Residual s/block | Residual % | Exact spans | Missing spans |\n")
+	b.WriteString("The block-stage residual is accepted-window wall time per finalized block minus measured ABCI block-stage averages: commit, finalize_block, prepare_proposal, and process_proposal. CometBFT's block-interval histogram measures block-header timestamp deltas and is not used as wall cadence. CheckTx is reported separately as transaction-intake pressure and is not subtracted from the block-stage residual. Exact CometBFT commit rows are nested spans; compare siblings under one parent rather than summing parents and children. The async tx-index rows can overlap consensus work.\n\n")
+	b.WriteString("| Node | Finalized blocks | Observed wall cadence s | Avg tx/block | ABCI block-stage s/block | CheckTx equiv s/block | Consensus step s/block | Residual s/block | Residual % | Exact commit coverage | Missing spans |\n")
 	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |\n")
 	for _, row := range rows {
 		b.WriteString("| ")
@@ -6197,8 +6611,8 @@ func writeCadenceDiagnosticsMarkdown(b *strings.Builder, rows []cadenceDiagnosti
 		return
 	}
 	b.WriteString("### Accepted-Window Cadence Diagnostic Stages\n\n")
-	b.WriteString("| Node | Stage | Class | Source | Provenance | Total s | Count | Avg s | Per-block s | Residual bucket | Note |\n")
-	b.WriteString("| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |\n")
+	b.WriteString("| Node | Stage | Parent | Class | Source | Provenance | Total s | Count | Avg s | Per-block s | Residual bucket | Note |\n")
+	b.WriteString("| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |\n")
 	for _, row := range stages {
 		note := row.stage.Note
 		if row.stage.MissingReason != "" {
@@ -6211,6 +6625,8 @@ func writeCadenceDiagnosticsMarkdown(b *strings.Builder, rows []cadenceDiagnosti
 		b.WriteString(mdCell(row.node))
 		b.WriteString(" | ")
 		b.WriteString(mdCell(row.stage.Name))
+		b.WriteString(" | ")
+		b.WriteString(mdCell(row.stage.Parent))
 		b.WriteString(" | ")
 		b.WriteString(mdCell(row.stage.Class))
 		b.WriteString(" | ")
@@ -6260,13 +6676,20 @@ func writePipelineSignalsMarkdown(b *strings.Builder, rows []pipelineSignal) {
 		return
 	}
 	b.WriteString("### Accepted-Window Transaction Pipeline Summary\n\n")
-	b.WriteString("This summary promotes node metrics and Catalyst aggregate logs. It does not include per-transaction broadcast or inclusion latency unless Catalyst exports those timings.\n\n")
-	b.WriteString("| Node | Submitted | Included | Successful | Send gap | Blocks | Txs/block | Block interval s | CheckTx avg s | Finalize avg s | Commit avg s |\n")
+	b.WriteString("This summary promotes node metrics and Catalyst aggregate logs. Observed cadence is accepted-window wall time per finalized block; the raw CometBFT block-interval histogram instead measures block-header timestamp deltas. This summary does not include per-transaction broadcast or inclusion latency unless Catalyst exports those timings.\n\n")
+	b.WriteString("| Node | Submitted | Included | Successful | Send gap | Blocks | Txs/block | Observed cadence s | CheckTx avg s | Finalize avg s | Commit avg s |\n")
 	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 	for _, row := range rows {
-		blocks := row.CollectorBlockSpan
-		if blocks == 0 && row.ABCICommitCount > 0 {
+		var blocks uint64
+		switch {
+		case row.ABCIFinalizeBlockCount > 0:
+			blocks = uint64(row.ABCIFinalizeBlockCount)
+		case row.ABCICommitCount > 0:
 			blocks = uint64(row.ABCICommitCount)
+		case row.ConsensusBlockIntervalCount > 0:
+			blocks = uint64(row.ConsensusBlockIntervalCount)
+		default:
+			blocks = row.CollectorBlockSpan
 		}
 		txsPerBlock := row.AvgTxsPerConsensusBlock
 		if txsPerBlock == 0 && blocks > 0 {
