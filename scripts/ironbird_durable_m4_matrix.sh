@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if (($# != 0)); then
+if [[ "${M4_MATRIX_LIBRARY_ONLY:-false}" != "true" ]] && (($# != 0)); then
   printf 'usage: %s (configure with environment variables; no positional arguments)\n' "$0" >&2
   exit 2
 fi
@@ -106,7 +106,7 @@ accepted_result() {
 
 append_summary() {
   local pair="$1"
-  local label="$2"
+  local row_label="$2"
   local attempt="$3"
   local json="$4"
   local summary="$OUT_ROOT/pairs/summary.tsv"
@@ -116,16 +116,26 @@ append_summary() {
   fi
   jq -r \
     --arg pair "$pair" \
-    --arg label "$label" \
+    --arg row_label "$row_label" \
     --arg attempt "$attempt" \
     --arg json "$json" '
-      [$pair, $label, $attempt, "true",
+      [$pair, $row_label, $attempt, "true",
        (.results[0].load_window.seconds | tostring),
        (.results[0].load_window.included_transactions | tostring),
        (.results[0].load_window.successful_transactions | tostring),
        (.results[0].derived_metrics.load_window_included_tps | tostring),
        (.results[0].wall_seconds | tostring), $json] | @tsv
     ' "$json" >> "$summary"
+}
+
+summary_has_row() {
+  local pair="$1"
+  local row_label="$2"
+  local summary="$OUT_ROOT/pairs/summary.tsv"
+  [[ -f "$summary" ]] || return 1
+  awk -F '\t' -v pair="$pair" -v row_label="$row_label" \
+    'NR > 1 && $1 == pair && $2 == row_label && $4 == "true" { found = 1 } END { exit found ? 0 : 1 }' \
+    "$summary"
 }
 
 run_row() {
@@ -136,6 +146,9 @@ run_row() {
 
   local row_dir="$OUT_ROOT/pairs/pair-$pair/$label"
   if [[ -f "$row_dir/result.json" ]] && accepted_result "$row_dir/result.json" "$backend" "$version" "$ref" "$image"; then
+    if ! summary_has_row "$pair" "$label"; then
+      append_summary "$pair" "$label" 1 "$row_dir/result.json"
+    fi
     log "already accepted pair=$pair row=$label"
     return 0
   fi
@@ -189,17 +202,24 @@ run_row() {
   return 1
 }
 
-if ((START_PAIR < 1 || END_PAIR > 5 || START_PAIR > END_PAIR)); then
-  log "invalid pair range: $START_PAIR..$END_PAIR"
-  exit 2
-fi
+main() {
+  if ((START_PAIR < 1 || END_PAIR > 5 || START_PAIR > END_PAIR)); then
+    log "invalid pair range: $START_PAIR..$END_PAIR"
+    exit 2
+  fi
 
-for ((pair = START_PAIR; pair <= END_PAIR; pair++)); do
-  order="$(order_for_pair "$pair")"
-  log "pair=$pair order=$order"
-  for label in $order; do
-    run_row "$pair" "$label"
+  local pair order label
+  for ((pair = START_PAIR; pair <= END_PAIR; pair++)); do
+    order="$(order_for_pair "$pair")"
+    log "pair=$pair order=$order"
+    for label in $order; do
+      run_row "$pair" "$label"
+    done
   done
-done
 
-log "completed canonical pair range $START_PAIR..$END_PAIR"
+  log "completed canonical pair range $START_PAIR..$END_PAIR"
+}
+
+if [[ "${M4_MATRIX_LIBRARY_ONLY:-false}" != "true" ]]; then
+  main
+fi
