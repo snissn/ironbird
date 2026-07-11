@@ -37,6 +37,13 @@ def metric_delta(metrics: dict[str, Any], name: str) -> float:
     return float(value or 0)
 
 
+def metric_value(metrics: dict[str, Any], name: str, field: str) -> float:
+    value = metrics.get(name, {})
+    if isinstance(value, dict):
+        value = value.get(field, 0)
+    return float(value or 0)
+
+
 def quantile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
     if not ordered:
@@ -117,11 +124,29 @@ def read_row(path: Path, pair: int, label: str) -> dict[str, Any]:
         metrics = delta_row.get("metrics", {})
         write_sync_calls = metric_delta(metrics, "treedb.public.batch.write_sync.calls_total")
         write_sync_ns = metric_delta(metrics, "treedb.public.batch.write_sync.ns_total")
-        wait_reasons = {
-            name: metric_delta(metrics, name)
-            for name in metrics
-            if "write.wait.reason" in name or "wait.reason" in name
-        }
+        wait_reasons = {}
+        for reason in ("frontier_cutover", "checkpoint_drain", "maintenance"):
+            prefix = f"treedb.cache.write.wait.{reason}"
+            count = metric_delta(metrics, f"{prefix}.count_total")
+            wait_reasons[reason] = {
+                "count": count,
+                "total_seconds": metric_delta(metrics, f"{prefix}.ns_total") / 1e9,
+                # A monotonic max cannot be differenced into an exact window max.
+                # When the window adds samples, the after value is a conservative
+                # upper bound; with no added sample the accepted-window max is zero.
+                "max_upper_bound_ms": (
+                    metric_value(metrics, f"{prefix}.ns_max", "after") / 1e6 if count else 0.0
+                ),
+                "p50_upper_bound_ms": (
+                    metric_value(metrics, f"{prefix}.p50_upper_ns", "after") / 1e6 if count else 0.0
+                ),
+                "p95_upper_bound_ms": (
+                    metric_value(metrics, f"{prefix}.p95_upper_ns", "after") / 1e6 if count else 0.0
+                ),
+                "p99_upper_bound_ms": (
+                    metric_value(metrics, f"{prefix}.p99_upper_ns", "after") / 1e6 if count else 0.0
+                ),
+            }
         stores[store] = {
             "write_sync_calls": write_sync_calls,
             "write_sync_total_seconds": write_sync_ns / 1e9,
@@ -133,6 +158,12 @@ def read_row(path: Path, pair: int, label: str) -> dict[str, Any]:
                 metrics, "treedb.cache.write.wait_for_checkpoint.ns_total"
             )
             / 1e9,
+            "checkpoint_wait_max_upper_bound_ms": (
+                metric_value(metrics, "treedb.cache.write.wait_for_checkpoint.ns_max", "after")
+                / 1e6
+                if metric_delta(metrics, "treedb.cache.write.wait_for_checkpoint.count_total")
+                else 0.0
+            ),
             "checkpoint_runs": metric_delta(metrics, "treedb.cache.checkpoint.runs"),
             "checkpoint_total_seconds": metric_delta(
                 metrics, "treedb.cache.checkpoint.total_ms"
@@ -160,7 +191,10 @@ def read_row(path: Path, pair: int, label: str) -> dict[str, Any]:
                 metrics, "treedb.command_wal.sync.ns_total"
             )
             / 1e9,
-            "wait_reason_deltas": wait_reasons,
+            "post_frontier_admissions": metric_delta(
+                metrics, "treedb.cache.write.post_frontier_admission.count_total"
+            ),
+            "write_wait_reasons": wait_reasons,
         }
 
     data_dir = next(
@@ -293,7 +327,24 @@ def main() -> None:
         row["stores"]["state.db"]["write_sync_avg_ms"] for row in candidate
     ]
     candidate_tx_checkpoint_wait = [
-        row["stores"]["tx_index.db"]["checkpoint_wait_seconds"] for row in candidate
+        sum(
+            row["stores"]["tx_index.db"]["write_wait_reasons"][reason]["total_seconds"]
+            for reason in ("frontier_cutover", "checkpoint_drain")
+        )
+        for row in candidate
+    ]
+    candidate_tx_checkpoint_wait_max = [
+        max(
+            row["stores"]["tx_index.db"]["write_wait_reasons"][reason]["max_upper_bound_ms"]
+            for reason in ("frontier_cutover", "checkpoint_drain")
+        )
+        for row in candidate
+    ]
+    candidate_app_write_sync = [
+        row["stores"]["application.db"]["write_sync_avg_ms"] for row in candidate
+    ]
+    candidate_async_tx_index = [
+        row["stages_ms_per_block"]["tx index block total"] for row in candidate
     ]
     net_stage_gaps = [row["net_four_stage_ms_per_block"] for row in stage_gaps]
     throughput = paired["tps"]
@@ -303,6 +354,9 @@ def main() -> None:
         and throughput["positive_pairs"] > args.pairs / 2,
         "state_write_sync_pass": statistics.median(candidate_state_write_sync) <= 16.0,
         "tx_index_checkpoint_wait_pass": statistics.median(candidate_tx_checkpoint_wait) <= 3.0,
+        "tx_index_checkpoint_wait_max_pass": max(candidate_tx_checkpoint_wait_max) <= 250.0,
+        "application_write_sync_pass": statistics.median(candidate_app_write_sync) <= 17.0,
+        "async_tx_index_pass": statistics.median(candidate_async_tx_index) <= 42.0,
         "synchronous_stage_gap_pass": statistics.median(net_stage_gaps) <= 10.0,
     }
     gates["all_numeric_pass"] = all(gates.values())
@@ -314,7 +368,11 @@ def main() -> None:
         "paired_baseline_to_candidate": paired,
         "candidate_vs_leveldb_synchronous_stage_gaps": stage_gaps,
         "candidate_state_write_sync_ms": candidate_state_write_sync,
+        "candidate_application_write_sync_ms": candidate_app_write_sync,
         "candidate_tx_index_checkpoint_wait_seconds": candidate_tx_checkpoint_wait,
+        "candidate_tx_index_checkpoint_wait_max_upper_bound_ms":
+            candidate_tx_checkpoint_wait_max,
+        "candidate_async_tx_index_ms_per_block": candidate_async_tx_index,
         "candidate_primary_rsd_pct": candidate_primary_rsd,
         "extend_to_five": max(candidate_primary_rsd.values()) > 3.0
         or (
