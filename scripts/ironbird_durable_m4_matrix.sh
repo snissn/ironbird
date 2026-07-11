@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if (($# != 0)); then
+  printf 'usage: %s (configure with environment variables; no positional arguments)\n' "$0" >&2
+  exit 2
+fi
+
 RUNNER="${RUNNER:-/mnt/fast4tb/bin/ironbird-local-report-runner-3658-1bc048e}"
 OUT_ROOT="${OUT_ROOT:-/mnt/fast4tb/ironbird-durable-m4-validation-20260710}"
 START_PAIR="${START_PAIR:-1}"
