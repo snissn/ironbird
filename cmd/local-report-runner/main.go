@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -857,6 +858,8 @@ func main() {
 		wallets                     = flag.Int("wallets", 5000, "wallets funded in genesis and exposed to Catalyst")
 		preseedProfile              = flag.String("preseed-profile", "none", "preseed profile: none or accounts")
 		preseedAccounts             = flag.Int("preseed-accounts", 0, "additional deterministic inactive accounts funded in genesis for simapp scenarios")
+		simappGomapVersionFlag      = flag.String("simapp-gomap-version", defaultSimappGomapVersion, "exact gomap module version used to build simapp images")
+		simappGomapRefFlag          = flag.String("simapp-gomap-ref", defaultSimappGomapRef, "full gomap commit corresponding to -simapp-gomap-version")
 		catalyst                    = flag.String("catalyst-version", "", "Catalyst Docker tag; empty uses ghcr.io/skip-mev/catalyst:latest")
 		celestiaABScript            = flag.String("celestia-ab-script", "/home/mikers/dev/snissn/gomap-human/scripts/run_celestia_ab.sh", "run_celestia A/B script used by -scenario celestia-sync-ab")
 		celestiaRunCommand          = flag.String("celestia-run-cmd", filepath.Join(defaultCelestiaAppDir, "run_celestia.sh"), "Celestia sync launcher command used by run_celestia_ab.sh")
@@ -907,6 +910,10 @@ func main() {
 	}
 	if *treeDBPostLoadDwell < 0 {
 		fatalf("-treedb-post-load-dwell must be >= 0, got %s", *treeDBPostLoadDwell)
+	}
+	simappGomapPin, err := newSimappGomapPin(*simappGomapVersionFlag, *simappGomapRefFlag)
+	if err != nil {
+		fatalf("invalid simapp gomap pin: %v", err)
 	}
 	appProfiles := appProfileCaptureConfig{
 		CPUOutDir:            *appCPUProfileDir,
@@ -970,10 +977,10 @@ func main() {
 
 	allScenarios := []scenario{
 		evmBlogScenario(*validators, *nodes, *wallets, *evmBlocks, *evmBatches, *evmMsgs, *evmMsgType, *evmSendInterval, *evmInitialWallets, *evmInitialContracts, *evmIterations, *evmCalldataSize, *evmGasFeeCap, *evmGasTipCap, *catalyst),
-		simappScenario("simapp-goleveldb", "SDK simapp with goleveldb app state", "goleveldb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst),
-		simappScenario("simapp-treedb", "SDK simapp with TreeDB app state", "treedb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst),
-		simappFullStackScenario("simapp-goleveldb-all", "SDK simapp with goleveldb app state and CometBFT node DBs", "goleveldb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst, *txIndexer),
-		simappFullStackScenario("simapp-treedb-all", "SDK simapp with TreeDB app state and CometBFT node DBs", "treedb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst, *txIndexer),
+		simappScenario("simapp-goleveldb", "SDK simapp with goleveldb app state", "goleveldb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst, simappGomapPin),
+		simappScenario("simapp-treedb", "SDK simapp with TreeDB app state", "treedb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst, simappGomapPin),
+		simappFullStackScenario("simapp-goleveldb-all", "SDK simapp with goleveldb app state and CometBFT node DBs", "goleveldb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst, *txIndexer, simappGomapPin),
+		simappFullStackScenario("simapp-treedb-all", "SDK simapp with TreeDB app state and CometBFT node DBs", "treedb", *validators, *nodes, *wallets, preseed, *cosmosBlocks, *cosmosTxs, *cosmosMsg, *cosmosContained, *cosmosMsgsPerTx, *cosmosRecipients, *cosmosMaxGas, *catalyst, *txIndexer, simappGomapPin),
 		celestiaSyncScenario(celestiaConfig),
 	}
 	selectedScenarios := selectScenarios(allScenarios, *scenarioFlag)
@@ -1317,19 +1324,50 @@ func makePreseedConfig(profile string, accounts, activeWallets int) preseedConfi
 }
 
 const (
-	simappCosmosDBVersion = "v0.0.0-20260701184343-6ddcb75557e5"
-	simappCosmosDBRef     = "6ddcb75557e59bc4e6668ac7699cd52b63b3e402"
-	simappGomapVersion    = "v0.6.2-0.20260709230517-9cd9c6874860"
-	simappGomapRef        = "9cd9c6874860d2988002701bef042e50ba142cd0"
-	simappIAVLVersion     = "v0.0.0-20260701072929-12a26715119b"
-	simappIAVLRef         = "12a26715119bb3ea55289ffd7b256161effc7b8b"
-	simappCometDBVersion  = "v0.0.0-20260701074104-b4f87847a725"
-	simappCometDBRef      = "b4f87847a725f92a046d927ce4a0f5b08b965995"
-	simappCometBFTVersion = "87379c903cc82c03874b24a6e3f9045784ba4681"
-	simappCometBFTRef     = "87379c903cc82c03874b24a6e3f9045784ba4681"
+	simappCosmosDBVersion     = "v0.0.0-20260701184343-6ddcb75557e5"
+	simappCosmosDBRef         = "6ddcb75557e59bc4e6668ac7699cd52b63b3e402"
+	defaultSimappGomapVersion = "v0.6.2-0.20260709230517-9cd9c6874860"
+	defaultSimappGomapRef     = "9cd9c6874860d2988002701bef042e50ba142cd0"
+	simappIAVLVersion         = "v0.0.0-20260701072929-12a26715119b"
+	simappIAVLRef             = "12a26715119bb3ea55289ffd7b256161effc7b8b"
+	simappCometDBVersion      = "v0.0.0-20260701074104-b4f87847a725"
+	simappCometDBRef          = "b4f87847a725f92a046d927ce4a0f5b08b965995"
+	simappCometBFTVersion     = "87379c903cc82c03874b24a6e3f9045784ba4681"
+	simappCometBFTRef         = "87379c903cc82c03874b24a6e3f9045784ba4681"
 )
 
-func simappDependencyPins(includeCometDB bool) []dependencyPin {
+type simappGomapModulePin struct {
+	Version string
+	Ref     string
+}
+
+func newSimappGomapPin(version, ref string) (simappGomapModulePin, error) {
+	version = strings.TrimSpace(version)
+	ref = strings.ToLower(strings.TrimSpace(ref))
+	if version == "" {
+		return simappGomapModulePin{}, errors.New("version is empty")
+	}
+	if len(ref) != 40 {
+		return simappGomapModulePin{}, fmt.Errorf("ref %q must be a full 40-character commit", ref)
+	}
+	if _, err := hex.DecodeString(ref); err != nil {
+		return simappGomapModulePin{}, fmt.Errorf("ref %q is not hexadecimal: %w", ref, err)
+	}
+	if !strings.HasSuffix(version, "-"+ref[:12]) {
+		return simappGomapModulePin{}, fmt.Errorf("version %q does not resolve suffix %s", version, ref[:12])
+	}
+	return simappGomapModulePin{Version: version, Ref: ref}, nil
+}
+
+func defaultSimappGomapPin() simappGomapModulePin {
+	pin, err := newSimappGomapPin(defaultSimappGomapVersion, defaultSimappGomapRef)
+	if err != nil {
+		panic(err)
+	}
+	return pin
+}
+
+func simappDependencyPins(includeCometDB bool, gomapPin simappGomapModulePin) []dependencyPin {
 	pins := []dependencyPin{
 		{
 			Module:  "github.com/cosmos/cosmos-db",
@@ -1338,8 +1376,8 @@ func simappDependencyPins(includeCometDB bool) []dependencyPin {
 		},
 		{
 			Module:  "github.com/snissn/gomap",
-			Version: simappGomapVersion,
-			Ref:     simappGomapRef,
+			Version: gomapPin.Version,
+			Ref:     gomapPin.Ref,
 		},
 		{
 			Module:  "github.com/cosmos/iavl",
@@ -1364,10 +1402,10 @@ func simappDependencyPins(includeCometDB bool) []dependencyPin {
 	return pins
 }
 
-func simappReplaceCmd(includeCometDB bool) string {
+func simappReplaceCmd(includeCometDB bool, gomapPin simappGomapModulePin) string {
 	cmds := []string{
 		"github.com/cosmos/cosmos-db=github.com/snissn/cosmos-db@" + simappCosmosDBVersion,
-		"github.com/snissn/gomap=github.com/snissn/gomap@" + simappGomapVersion,
+		"github.com/snissn/gomap=github.com/snissn/gomap@" + gomapPin.Version,
 		"github.com/cosmos/iavl=github.com/snissn/iavl@" + simappIAVLVersion,
 	}
 	if includeCometDB {
@@ -1379,15 +1417,15 @@ func simappReplaceCmd(includeCometDB bool) string {
 	return strings.Join(cmds, " ")
 }
 
-func simappScenario(name, desc, backend string, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst string) scenario {
-	return simappScenarioWithBackends(name, desc, backend, "", "", false, validators, nodes, wallets, preseed, blocks, txs, cosmosMsg, containedMsg, msgsPerTx, recipients, maxGas, catalyst)
+func simappScenario(name, desc, backend string, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst string, gomapPin simappGomapModulePin) scenario {
+	return simappScenarioWithBackends(name, desc, backend, "", "", false, validators, nodes, wallets, preseed, blocks, txs, cosmosMsg, containedMsg, msgsPerTx, recipients, maxGas, catalyst, gomapPin)
 }
 
-func simappFullStackScenario(name, desc, backend string, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst, txIndexer string) scenario {
-	return simappScenarioWithBackends(name, desc, backend, backend, txIndexer, true, validators, nodes, wallets, preseed, blocks, txs, cosmosMsg, containedMsg, msgsPerTx, recipients, maxGas, catalyst)
+func simappFullStackScenario(name, desc, backend string, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst, txIndexer string, gomapPin simappGomapModulePin) scenario {
+	return simappScenarioWithBackends(name, desc, backend, backend, txIndexer, true, validators, nodes, wallets, preseed, blocks, txs, cosmosMsg, containedMsg, msgsPerTx, recipients, maxGas, catalyst, gomapPin)
 }
 
-func simappScenarioWithBackends(name, desc, appBackend, nodeBackend, txIndexer string, includeCometDB bool, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst string) scenario {
+func simappScenarioWithBackends(name, desc, appBackend, nodeBackend, txIndexer string, includeCometDB bool, validators, nodes uint64, wallets int, preseed preseedConfig, blocks, txs int, cosmosMsg, containedMsg string, msgsPerTx, recipients int, maxGas int64, catalyst string, gomapPin simappGomapModulePin) scenario {
 	appConfig := map[string]interface{}{}
 	if appBackend != "" {
 		appConfig["app-db-backend"] = appBackend
@@ -1417,10 +1455,10 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend, txIndexer s
 		ChainSource:     "https://github.com/snissn/celestia-cosmos-sdk",
 		ChainRef:        "494824795d0b9eabf318aba755ee3320462df7ad",
 		Dockerfile:      "hack/simapp.Dockerfile",
-		ReplaceCmd:      simappReplaceCmd(includeCometDB),
+		ReplaceCmd:      simappReplaceCmd(includeCometDB, gomapPin),
 		BaseImage:       "simapp",
-		ImageTag:        simappImageTag(includeCometDB),
-		DependencyPins:  simappDependencyPins(includeCometDB),
+		ImageTag:        simappImageTag(includeCometDB, gomapPin),
+		DependencyPins:  simappDependencyPins(includeCometDB, gomapPin),
 		Preseed:         preseed,
 		IsEVMChain:      false,
 		NumValidators:   validators,
@@ -1447,11 +1485,12 @@ func simappScenarioWithBackends(name, desc, appBackend, nodeBackend, txIndexer s
 	}
 }
 
-func simappImageTag(includeCometDB bool) string {
+func simappImageTag(includeCometDB bool, gomapPin simappGomapModulePin) string {
+	gomapShortRef := gomapPin.Ref[:7]
 	if includeCometDB {
-		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-9cd9c68-comet-87379c9"
+		return "ironbird-report:snissn-sdk-4948247-fullstack-cosmosdb-6ddcb75-cometdb-b4f878-gomap-" + gomapShortRef + "-comet-87379c9"
 	}
-	return "ironbird-report:snissn-sdk-4948247-cosmosdb-6ddcb75-gomap-9cd9c68"
+	return "ironbird-report:snissn-sdk-4948247-cosmosdb-6ddcb75-gomap-" + gomapShortRef
 }
 
 func celestiaSyncScenario(cfg celestiaSyncConfig) scenario {

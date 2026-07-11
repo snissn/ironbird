@@ -190,8 +190,64 @@ func TestLaunchGenesisAccountsUsesPreseedTotal(t *testing.T) {
 	}
 }
 
+func TestNewSimappGomapPinRequiresMatchingFullRef(t *testing.T) {
+	const (
+		version = "v0.6.2-0.20260711063646-09a626cd8f10"
+		ref     = "09a626cd8f10fa161ef7f259d43b6567ea3e8abb"
+	)
+	pin, err := newSimappGomapPin(version, ref)
+	if err != nil {
+		t.Fatalf("newSimappGomapPin: %v", err)
+	}
+	if pin.Version != version || pin.Ref != ref {
+		t.Fatalf("pin = %+v, want version/ref %q/%q", pin, version, ref)
+	}
+	for _, test := range []struct {
+		name    string
+		version string
+		ref     string
+	}{
+		{name: "empty version", ref: ref},
+		{name: "short ref", version: version, ref: ref[:12]},
+		{name: "non-hex ref", version: version, ref: "zzzzzzzzzzzzfa161ef7f259d43b6567ea3e8abb"},
+		{name: "mismatched version", version: defaultSimappGomapVersion, ref: ref},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := newSimappGomapPin(test.version, test.ref); err == nil {
+				t.Fatalf("newSimappGomapPin(%q, %q) unexpectedly succeeded", test.version, test.ref)
+			}
+		})
+	}
+}
+
+func TestSimappScenarioUsesRequestedGomapPin(t *testing.T) {
+	pin, err := newSimappGomapPin(
+		"v0.6.2-0.20260711063646-09a626cd8f10",
+		"09a626cd8f10fa161ef7f259d43b6567ea3e8abb",
+	)
+	if err != nil {
+		t.Fatalf("newSimappGomapPin: %v", err)
+	}
+	sc := simappFullStackScenario("simapp-treedb-all", "full stack TreeDB", "treedb", 1, 0, 100, preseedConfig{}, 2, 10, "MsgSend", "", 0, 0, 1000000, "", "kv", pin)
+	if !strings.Contains(sc.ReplaceCmd, "github.com/snissn/gomap=github.com/snissn/gomap@"+pin.Version) {
+		t.Fatalf("replace command missing requested gomap version: %s", sc.ReplaceCmd)
+	}
+	if !strings.Contains(sc.ImageTag, "gomap-09a626c") {
+		t.Fatalf("image tag = %q, want requested gomap ref", sc.ImageTag)
+	}
+	for _, dependency := range sc.DependencyPins {
+		if dependency.Module == "github.com/snissn/gomap" {
+			if dependency.Version != pin.Version || dependency.Ref != pin.Ref {
+				t.Fatalf("gomap dependency pin = %+v, want %+v", dependency, pin)
+			}
+			return
+		}
+	}
+	t.Fatalf("scenario dependency pins do not include gomap: %+v", sc.DependencyPins)
+}
+
 func TestSimappFullStackScenarioSetsAppAndNodeBackends(t *testing.T) {
-	sc := simappFullStackScenario("simapp-treedb-all", "full stack TreeDB", "treedb", 1, 0, 100, preseedConfig{}, 2, 10, "MsgSend", "", 0, 0, 1000000, "", "kv")
+	sc := simappFullStackScenario("simapp-treedb-all", "full stack TreeDB", "treedb", 1, 0, 100, preseedConfig{}, 2, 10, "MsgSend", "", 0, 0, 1000000, "", "kv", defaultSimappGomapPin())
 	if sc.AppDBBackend != "treedb" {
 		t.Fatalf("app backend = %q, want treedb", sc.AppDBBackend)
 	}
@@ -222,7 +278,7 @@ func TestSimappFullStackScenarioSetsAppAndNodeBackends(t *testing.T) {
 }
 
 func TestSimappAppOnlyScenarioDoesNotSetNodeBackend(t *testing.T) {
-	sc := simappScenario("simapp-treedb", "app TreeDB", "treedb", 1, 0, 100, preseedConfig{}, 2, 10, "MsgSend", "", 0, 0, 1000000, "")
+	sc := simappScenario("simapp-treedb", "app TreeDB", "treedb", 1, 0, 100, preseedConfig{}, 2, 10, "MsgSend", "", 0, 0, 1000000, "", defaultSimappGomapPin())
 	if sc.NodeDBBackend != "" {
 		t.Fatalf("node backend = %q, want empty for app-only scenario", sc.NodeDBBackend)
 	}
@@ -2450,7 +2506,7 @@ func TestLoadWindowMonitorWaitAnnotatesTimeout(t *testing.T) {
 }
 
 func TestSimappScenarioUsesLowLatencyConfig(t *testing.T) {
-	sc := simappScenario("simapp-treedb", "test", "treedb", 1, 0, 100, preseedConfig{Profile: "none", GenesisAccounts: 100}, 3, 50, "MsgSend", "MsgSend", 1, 1, 1000000, "")
+	sc := simappScenario("simapp-treedb", "test", "treedb", 1, 0, 100, preseedConfig{Profile: "none", GenesisAccounts: 100}, 3, 50, "MsgSend", "MsgSend", 1, 1, 1000000, "", defaultSimappGomapPin())
 	consensus, ok := sc.CustomConfig["consensus"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("missing consensus config: %#v", sc.CustomConfig)
